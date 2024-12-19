@@ -225,6 +225,30 @@ class CallChainStructure(ct.Structure):
                 ('entries', ct.POINTER(CallChainEntryStructure))]
 
 
+class EventCounterStructure(ct.Structure):
+    """ An event counter.
+        name: the name of the event.
+        id: the id of the counter.
+        count: the count value for corresponding counter id.
+    """
+    _fields_ = [('_name', ct.c_char_p),
+                ('id', ct.c_uint64),
+                ('count', ct.c_uint64)]
+
+    @property
+    def name(self) -> str:
+        return _char_pt_to_str(self._name)
+
+class EventCountersViewStructure(ct.Structure):
+    """ An array of event counter.
+        nr: number of event counters in the array.
+        event_counter: a pointer to an array of EventCounterStructure.
+    """
+    _fields_ = [('nr', ct.c_size_t),
+                ('event_counter', ct.POINTER(EventCounterStructure))]
+
+
+
 class FeatureSectionStructure(ct.Structure):
     """ A feature section in perf.data to store information like record cmd, device arch, etc.
         data: a pointer to a buffer storing the section data.
@@ -236,6 +260,23 @@ class FeatureSectionStructure(ct.Structure):
 
 class ReportLibStructure(ct.Structure):
     _fields_ = []
+
+
+def SetReportOptionsForReportLib(report_lib, options: ReportLibOptions):
+    if options.proguard_mapping_files:
+        for file_path in options.proguard_mapping_files:
+            report_lib.AddProguardMappingFile(file_path)
+    if options.show_art_frames:
+        report_lib.ShowArtFrames(True)
+    if options.remove_method:
+        for name in options.remove_method:
+            report_lib.RemoveMethod(name)
+    if options.trace_offcpu:
+        report_lib.SetTraceOffCpuMode(options.trace_offcpu)
+    if options.sample_filters:
+        report_lib.SetSampleFilter(options.sample_filters)
+    if options.aggregate_threads:
+        report_lib.AggregateThreads(options.aggregate_threads)
 
 
 # pylint: disable=invalid-name
@@ -257,6 +298,8 @@ class ReportLib(object):
         self._SetKallsymsFileFunc = self._lib.SetKallsymsFile
         self._ShowIpForUnknownSymbolFunc = self._lib.ShowIpForUnknownSymbol
         self._ShowArtFramesFunc = self._lib.ShowArtFrames
+        self._RemoveMethodFunc = self._lib.RemoveMethod
+        self._RemoveMethodFunc.restype = ct.c_bool
         self._MergeJavaMethodsFunc = self._lib.MergeJavaMethods
         self._AddProguardMappingFileFunc = self._lib.AddProguardMappingFile
         self._AddProguardMappingFileFunc.restype = ct.c_bool
@@ -276,8 +319,12 @@ class ReportLib(object):
         self._GetSymbolOfCurrentSampleFunc.restype = ct.POINTER(SymbolStruct)
         self._GetCallChainOfCurrentSampleFunc = self._lib.GetCallChainOfCurrentSample
         self._GetCallChainOfCurrentSampleFunc.restype = ct.POINTER(CallChainStructure)
+        self._GetEventCountersOfCurrentSampleFunc = self._lib.GetEventCountersOfCurrentSample
+        self._GetEventCountersOfCurrentSampleFunc.restype = ct.POINTER(EventCountersViewStructure)
         self._GetTracingDataOfCurrentSampleFunc = self._lib.GetTracingDataOfCurrentSample
         self._GetTracingDataOfCurrentSampleFunc.restype = ct.POINTER(ct.c_char)
+        self._GetProcessNameOfCurrentSampleFunc = self._lib.GetProcessNameOfCurrentSample
+        self._GetProcessNameOfCurrentSampleFunc.restype = ct.c_char_p
         self._GetBuildIdForPathFunc = self._lib.GetBuildIdForPath
         self._GetBuildIdForPathFunc.restype = ct.c_char_p
         self._GetFeatureSection = self._lib.GetFeatureSection
@@ -304,17 +351,7 @@ class ReportLib(object):
 
     def SetReportOptions(self, options: ReportLibOptions):
         """ Set report options in one call. """
-        if options.proguard_mapping_files:
-            for file_path in options.proguard_mapping_files:
-                self.AddProguardMappingFile(file_path)
-        if options.show_art_frames:
-            self.ShowArtFrames(True)
-        if options.trace_offcpu:
-            self.SetTraceOffCpuMode(options.trace_offcpu)
-        if options.sample_filters:
-            self.SetSampleFilter(options.sample_filters)
-        if options.aggregate_threads:
-            self.AggregateThreads(options.aggregate_threads)
+        SetReportOptionsForReportLib(self, options)
 
     def SetLogSeverity(self, log_level: str = 'info'):
         """ Set log severity of native lib, can be verbose,debug,info,error,fatal."""
@@ -337,6 +374,11 @@ class ReportLib(object):
     def ShowArtFrames(self, show: bool = True):
         """ Show frames of internal methods of the Java interpreter. """
         self._ShowArtFramesFunc(self.getInstance(), show)
+
+    def RemoveMethod(self, method_name_regex: str):
+        """ Remove methods with name containing method_name_regex. """
+        res = self._RemoveMethodFunc(self.getInstance(), _char_pt(method_name_regex))
+        _check(res, f'failed to call RemoveMethod({method_name_regex})')
 
     def MergeJavaMethods(self, merge: bool = True):
         """ This option merges jitted java methods with the same name but in different jit
@@ -444,6 +486,11 @@ class ReportLib(object):
         assert not _is_null(callchain)
         return callchain[0]
 
+    def GetEventCountersOfCurrentSample(self) -> EventCountersViewStructure:
+        event_counters = self._GetEventCountersOfCurrentSampleFunc(self.getInstance())
+        assert not _is_null(event_counters)
+        return event_counters[0]
+
     def GetTracingDataOfCurrentSample(self) -> Optional[Dict[str, Any]]:
         data = self._GetTracingDataOfCurrentSampleFunc(self.getInstance())
         if _is_null(data):
@@ -454,6 +501,9 @@ class ReportLib(object):
             field = event.tracing_data_format.fields[i]
             result[field.name] = field.parse_value(data)
         return result
+
+    def GetProcessNameOfCurrentSample(self) -> str:
+        return _char_pt_to_str(self._GetProcessNameOfCurrentSampleFunc(self.getInstance()))
 
     def GetBuildIdForPath(self, path: str) -> str:
         build_id = self._GetBuildIdForPathFunc(self.getInstance(), _char_pt(path))
@@ -565,19 +615,25 @@ class ProtoFileReportLib:
                      '`pip install protobuf==4.21`.')
 
     def __init__(self):
+        self.record_file = None
         self.report_sample_pb2 = ProtoFileReportLib.get_report_sample_pb2()
-        self.samples: List[self.report_sample_pb2.Sample] = []
-        self.sample_index = -1
+        self.records: List[self.report_sample_pb2.Record] = []
+        self.record_index = -1
         self.files: List[self.report_sample_pb2.File] = []
         self.thread_map: Dict[int, self.report_sample_pb2.Thread] = {}
         self.meta_info: Optional[self.report_sample_pb2.MetaInfo] = None
         self.fake_mapping_starts = []
+        self.sample_queue: List[self.report_sample_pb2.Sample] = collections.deque()
+        self.trace_offcpu_mode = None
+        # mapping from thread id to the last off-cpu sample in the thread
+        self.offcpu_samples = {}
 
     def Close(self):
         pass
 
     def SetReportOptions(self, options: ReportLibOptions):
-        pass
+        """ Set report options in one call. """
+        SetReportOptionsForReportLib(self, options)
 
     def SetLogSeverity(self, log_level: str = 'info'):
         pass
@@ -586,6 +642,7 @@ class ProtoFileReportLib:
         pass
 
     def SetRecordFile(self, record_file: str):
+        self.record_file = record_file
         with open(record_file, 'rb') as fh:
             data = fh.read()
         _check(data[:10] == b'SIMPLEPERF', f'magic number mismatch: {data[:10]}')
@@ -602,54 +659,147 @@ class ProtoFileReportLib:
             record = self.report_sample_pb2.Record()
             record.ParseFromString(data[i: i + size])
             i += size
-            if record.HasField('sample'):
-                self.samples.append(record.sample)
+            if record.HasField('sample') or record.HasField('context_switch'):
+                self.records.append(record)
             elif record.HasField('file'):
                 self.files.append(record.file)
             elif record.HasField('thread'):
                 self.thread_map[record.thread.thread_id] = record.thread
             elif record.HasField('meta_info'):
                 self.meta_info = record.meta_info
+                if self.meta_info.trace_offcpu:
+                    self.trace_offcpu_mode = 'mixed-on-off-cpu'
         fake_mapping_start = 0
         for file in self.files:
             self.fake_mapping_starts.append(fake_mapping_start)
             fake_mapping_start += len(file.symbol) + 1
 
+    def AddProguardMappingFile(self, mapping_file: Union[str, Path]):
+        """ Add proguard mapping.txt to de-obfuscate method names. """
+        raise NotImplementedError(
+            'Adding proguard mapping files are not implemented for report_sample profiles')
+
     def ShowIpForUnknownSymbol(self):
         pass
 
     def ShowArtFrames(self, show: bool = True):
-        pass
+        raise NotImplementedError(
+            'Showing art frames are not implemented for report_sample profiles')
+
+    def RemoveMethod(self, method_name_regex: str):
+        """ Remove methods with name containing method_name_regex. """
+        raise NotImplementedError("Removing method isn't implemented for report_sample profiles")
 
     def SetSampleFilter(self, filters: List[str]):
         raise NotImplementedError('sample filters are not implemented for report_sample profiles')
 
+    def GetSupportedTraceOffCpuModes(self) -> List[str]:
+        """ Get trace-offcpu modes supported by the recording file. It should be called after
+            SetRecordFile(). The modes are only available for profiles recorded with --trace-offcpu
+            option. All possible modes are:
+              on-cpu:           report on-cpu samples with period representing time spent on cpu
+              off-cpu:          report off-cpu samples with period representing time spent off cpu
+              on-off-cpu:       report both on-cpu samples and off-cpu samples, which can be split
+                                by event name.
+              mixed-on-off-cpu: report on-cpu and off-cpu samples under the same event name.
+        """
+        _check(self.meta_info,
+               'GetSupportedTraceOffCpuModes() should be called after SetRecordFile()')
+        if self.meta_info.trace_offcpu:
+            return ['on-cpu', 'off-cpu', 'on-off-cpu', 'mixed-on-off-cpu']
+        return []
+
+    def SetTraceOffCpuMode(self, mode: str):
+        """ Set trace-offcpu mode. It should be called after SetRecordFile().
+        """
+        _check(mode in ['on-cpu', 'off-cpu', 'on-off-cpu', 'mixed-on-off-cpu'], 'invalide mode')
+        # Don't check if mode is in self.GetSupportedTraceOffCpuModes(). Because the profile may
+        # be generated by an old simpleperf.
+        self.trace_offcpu_mode = mode
+
+    def AggregateThreads(self, thread_name_regex_list: List[str]):
+        """ Given a list of thread name regex, threads with names matching the same regex are merged
+            into one thread. As a result, samples from different threads (like a thread pool) can be
+            shown in one flamegraph.
+        """
+        raise NotImplementedError(
+            'Aggregating threads are not implemented for report_sample profiles')
+
     def GetNextSample(self) -> Optional[ProtoSample]:
-        self.sample_index += 1
+        if self.sample_queue:
+            self.sample_queue.popleft()
+        while not self.sample_queue:
+            self.record_index += 1
+            if self.record_index >= len(self.records):
+                break
+            record = self.records[self.record_index]
+            if record.HasField('sample'):
+                self._process_sample_record(record.sample)
+            elif record.HasField('context_switch'):
+                self._process_context_switch(record.context_switch)
         return self.GetCurrentSample()
 
+    def _process_sample_record(self, sample) -> None:
+        if not self.trace_offcpu_mode:
+            self._add_to_sample_queue(sample)
+            return
+        event_name = self._get_event_name(sample.event_type_id)
+        is_offcpu = 'sched_switch' in event_name
+
+        if self.trace_offcpu_mode == 'on-cpu':
+            if not is_offcpu:
+                self._add_to_sample_queue(sample)
+            return
+
+        if prev_offcpu_sample := self.offcpu_samples.get(sample.thread_id):
+            # If there is a previous off-cpu sample, update its period.
+            prev_offcpu_sample.event_count = max(sample.time - prev_offcpu_sample.time, 1)
+            self._add_to_sample_queue(prev_offcpu_sample)
+
+        if is_offcpu:
+            self.offcpu_samples[sample.thread_id] = sample
+        else:
+            self.offcpu_samples[sample.thread_id] = None
+            if self.trace_offcpu_mode in ('on-off-cpu', 'mixed-on-off-cpu'):
+                self._add_to_sample_queue(sample)
+
+    def _process_context_switch(self, context_switch) -> None:
+        if not context_switch.switch_on:
+            return
+        if prev_offcpu_sample := self.offcpu_samples.get(context_switch.thread_id):
+            prev_offcpu_sample.event_count = max(context_switch.time - prev_offcpu_sample.time, 1)
+            self.offcpu_samples[context_switch.thread_id] = None
+            self._add_to_sample_queue(prev_offcpu_sample)
+
+    def _add_to_sample_queue(self, sample) -> None:
+        self.sample_queue.append(sample)
+
     def GetCurrentSample(self) -> Optional[ProtoSample]:
-        if self.sample_index >= len(self.samples):
+        if not self.sample_queue:
             return None
-        sample = self.samples[self.sample_index]
+        sample = self.sample_queue[0]
         thread = self.thread_map[sample.thread_id]
         return ProtoSample(
             ip=0, pid=thread.process_id, tid=thread.thread_id, thread_comm=thread.thread_name,
             time=sample.time, in_kernel=False, cpu=0, period=sample.event_count)
 
     def GetEventOfCurrentSample(self) -> ProtoEvent:
-        sample = self.samples[self.sample_index]
-        event_name = self.meta_info.event_type[sample.event_type_id]
+        sample = self.sample_queue[0]
+        event_type_id = 0 if self.trace_offcpu_mode == 'mixed-on-off-cpu' else sample.event_type_id
+        event_name = self._get_event_name(event_type_id)
         return ProtoEvent(name=event_name, tracing_data_format=None)
 
+    def _get_event_name(self, event_type_id: int) -> str:
+        return self.meta_info.event_type[event_type_id]
+
     def GetSymbolOfCurrentSample(self) -> ProtoSymbol:
-        sample = self.samples[self.sample_index]
+        sample = self.sample_queue[0]
         node = sample.callchain[0]
         return self._build_symbol(node)
 
     def GetCallChainOfCurrentSample(self) -> ProtoCallChain:
         entries = []
-        sample = self.samples[self.sample_index]
+        sample = self.sample_queue[0]
         for node in sample.callchain[1:]:
             symbol = self._build_symbol(node)
             entries.append(ProtoCallChainEntry(ip=0, symbol=symbol))

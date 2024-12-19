@@ -1,3 +1,25 @@
+Build 12821384 (Dec 19, 2024)
+record command:
+  Add -z to compress the recording file. It can also compress ETM data.
+  Add --etm-flush-interval to adjust the interval between ETM data flushes.
+  Support running on Android with 16KB page size.
+inject command:
+  Add --allow-mismatched-build-id to allow searching binaries by names.
+  Add --exclude-process-name to exclude data for selected processes.
+  Add -j to read input files with multithread.
+  Add -z to compress branch list file.
+  Add output format for llvm-bolt. It can convert ETM data to a bolt profile.
+  Fix issues converting ETM data for the kernel to an AutoFDO profile.
+report command: Add --lib to provide directories containing unstripped binaries.
+report scripts: Add --remove-method to hide methods in stack frames.
+pprof_proto_generator.py:
+  Add --tagroot to add pseudo stack frames (process and thread names).
+  Report events collected by --add-counter.
+Document:
+  Add doc for showing profiles in Perfetto.
+  Add doc for collecting ETM data for the kernel.
+
+
 build 11421629 (Feb 8, 2024)
 inject command:
   Support converting LBR profiles to AutoFDO format
