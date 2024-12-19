@@ -367,20 +367,31 @@ class AdbHelper(object):
 
     def get_android_version(self) -> int:
         """ Get Android version on device, like 7 is for Android N, 8 is for Android O."""
-        build_version = self.get_property('ro.build.version.codename')
-        if not build_version or build_version == 'REL':
-            build_version = self.get_property('ro.build.version.release')
-        android_version = 0
-        if build_version:
-            if build_version[0].isdigit():
+        def parse_version(s: str) -> int:
+            if not s:
+                return 0
+            if s[0].isdigit():
                 i = 1
-                while i < len(build_version) and build_version[i].isdigit():
+                while i < len(s) and s[i].isdigit():
                     i += 1
-                android_version = int(build_version[:i])
+                return int(s[:i])
             else:
-                c = build_version[0].upper()
-                if c.isupper() and c >= 'L':
-                    android_version = ord(c) - ord('L') + 5
+                c = s[0].upper()
+                if c.isupper() and 'L' <= c <= 'V':
+                    return ord(c) - ord('L') + 5
+            return 0
+
+        android_version = 0
+        s = self.get_property('ro.build.version.codename')
+        if s != 'REL':
+            android_version = parse_version(s)
+        if android_version == 0:
+            s = self.get_property('ro.build.version.release')
+            android_version = parse_version(s)
+        if android_version == 0:
+            s = self.get_property('ro.build.version.sdk')
+            if int(s) >= 35:
+                android_version = 15
         return android_version
 
 
@@ -844,6 +855,7 @@ class Objdump(object):
                 real_path]
         if arch == 'arm' and 'llvm-objdump' in objdump_path:
             args += ['--print-imm-hex']
+        logging.debug('disassembling: %s', ' '.join(args))
         try:
             subproc = subprocess.Popen(args, stdout=subprocess.PIPE)
             (stdoutdata, _) = subproc.communicate()
@@ -1096,6 +1108,7 @@ class ArgParseFormatter(
 @dataclass
 class ReportLibOptions:
     show_art_frames: bool
+    remove_method: List[str]
     trace_offcpu: str
     proguard_mapping_files: List[str]
     sample_filters: List[str]
@@ -1121,6 +1134,8 @@ class BaseArgumentParser(argparse.ArgumentParser):
         parser.add_argument('--show-art-frames', '--show_art_frames',
                             action=argparse.BooleanOptionalAction, default=default_show_art_frames,
                             help='Show frames of internal methods in the ART Java interpreter.')
+        parser.add_argument('--remove-method', nargs='+', metavar='method_name_regex',
+                            help='remove methods with name containing the regular expression')
         parser.add_argument(
             '--trace-offcpu', choices=['on-cpu', 'off-cpu', 'on-off-cpu', 'mixed-on-off-cpu'],
             help="""Set report mode for profiles recorded with --trace-offcpu option. All possible
@@ -1220,8 +1235,8 @@ class BaseArgumentParser(argparse.ArgumentParser):
         if self.has_report_lib_options:
             sample_filters = self._build_sample_filter(namespace)
             report_lib_options = ReportLibOptions(
-                namespace.show_art_frames, namespace.trace_offcpu, namespace.proguard_mapping_file,
-                sample_filters, namespace.aggregate_threads)
+                namespace.show_art_frames, namespace.remove_method, namespace.trace_offcpu,
+                namespace.proguard_mapping_file, sample_filters, namespace.aggregate_threads)
             setattr(namespace, 'report_lib_options', report_lib_options)
 
         if not Log.initialized:
