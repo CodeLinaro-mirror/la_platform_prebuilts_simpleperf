@@ -24,7 +24,7 @@ For example, process `123` of application `foo.bar.baz` should create
 
 ### Symbol map file location for standalone program
 
-Standalone programs should create symbol map files in `/data/local/tmp`.
+Standalone programs should create symbol map files in `/data/local/tmp` or `/tmp`.
 
 For example, standalone program process `123` should create `/data/local/tmp/perf-123.map`.
 
