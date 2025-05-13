@@ -23,9 +23,10 @@
 import collections
 from collections import namedtuple
 import ctypes as ct
+import etm_types as etm
 from pathlib import Path
 import struct
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from simpleperf_utils import (bytes_to_str, get_host_binary_path, is_windows, log_exit,
                               str_to_bytes, ReportLibOptions)
@@ -112,18 +113,25 @@ class TracingFieldFormatStruct(ct.Structure):
         """
         if self.is_dynamic:
             offset, max_len = struct.unpack('<HH', data[self.offset:self.offset + 4])
-            length = 0
-            while length < max_len and bytes_to_str(data[offset + length]) != '\x00':
-                length += 1
-            return bytes_to_str(data[offset: offset + length])
+            try:
+                length = 0
+                while length < max_len and bytes_to_str(data[offset + length]) != '\x00':
+                    length += 1
+                return bytes_to_str(data[offset: offset + length])
+            except UnicodeDecodeError:
+                return data[offset: offset + max_len]
 
         if self.elem_count > 1 and self.elem_size == 1:
             # Probably the field is a string.
             # Don't use self.is_signed, which has different values on x86 and arm.
-            length = 0
-            while length < self.elem_count and bytes_to_str(data[self.offset + length]) != '\x00':
-                length += 1
-            return bytes_to_str(data[self.offset: self.offset + length])
+            try:
+                length = 0
+                while length < self.elem_count and bytes_to_str(
+                        data[self.offset + length]) != '\x00':
+                    length += 1
+                return bytes_to_str(data[self.offset: self.offset + length])
+            except UnicodeDecodeError:
+                pass
         unpack_key = self._unpack_key_dict.get(self.elem_size)
         if unpack_key:
             if not self.is_signed:
@@ -239,6 +247,7 @@ class EventCounterStructure(ct.Structure):
     def name(self) -> str:
         return _char_pt_to_str(self._name)
 
+
 class EventCountersViewStructure(ct.Structure):
     """ An array of event counter.
         nr: number of event counters in the array.
@@ -248,7 +257,6 @@ class EventCountersViewStructure(ct.Structure):
                 ('event_counter', ct.POINTER(EventCounterStructure))]
 
 
-
 class FeatureSectionStructure(ct.Structure):
     """ A feature section in perf.data to store information like record cmd, device arch, etc.
         data: a pointer to a buffer storing the section data.
@@ -256,6 +264,22 @@ class FeatureSectionStructure(ct.Structure):
     """
     _fields_ = [('data', ct.POINTER(ct.c_char)),
                 ('data_size', ct.c_uint32)]
+
+
+class BuildIdPairStructure(ct.Structure):
+    _fields_ = [("build_id", ct.POINTER(ct.c_char)),
+                ("filename", ct.c_char_p)]
+
+
+class DsoAddress(ct.Structure):
+    _fields_ = [('path', ct.c_char_p),
+                ('offset', ct.c_uint64)]
+
+
+class Thread(ct.Structure):
+    _fields_ = [('pid', ct.c_int),
+                ('tid', ct.c_int),
+                ('comm', ct.c_char_p)]
 
 
 class ReportLibStructure(ct.Structure):
@@ -329,12 +353,28 @@ class ReportLib(object):
         self._GetBuildIdForPathFunc.restype = ct.c_char_p
         self._GetFeatureSection = self._lib.GetFeatureSection
         self._GetFeatureSection.restype = ct.POINTER(FeatureSectionStructure)
+        self._GetAllBuildIds = self._lib.GetAllBuildIds
+        self._GetAllBuildIds.restype = ct.POINTER(BuildIdPairStructure)
+        self._ETMCallbackType = ct.CFUNCTYPE(
+            None, ct.c_uint8, ct.POINTER(etm.GenericTraceElement))
+        self._SetETMCallback = self._lib.SetETMCallback
+        self._SetETMCallback.argtypes = [ct.POINTER(ReportLibStructure), self._ETMCallbackType]
+        self._ConvertETMAddressToVaddrInFile = self._lib.ConvertETMAddressToVaddrInFile
+        self._ConvertETMAddressToVaddrInFile.restype = DsoAddress
+        self._ConvertETMAddressToVaddrInFile.argtypes = [
+            ct.POINTER(ReportLibStructure), ct.c_uint8, ct.c_uint64]
+        self._GetThread = self._lib.GetThread
+        self._GetThread.restype = Thread
+        self._GetThread.argtypes = [ct.POINTER(ReportLibStructure), ct.c_int]
+        self._ReadSymbolsForPath = self._lib.ReadSymbolsForPath
+        self._ReadSymbolsForPath.restype = ct.POINTER(SymbolStruct)
         self._instance = self._CreateReportLibFunc()
         assert not _is_null(self._instance)
 
         self.meta_info: Optional[Dict[str, str]] = None
         self.current_sample: Optional[SampleStruct] = None
         self.record_cmd: Optional[str] = None
+        self.callback: Optional[ct._FuncPointer] = None
 
     def _get_native_lib(self) -> str:
         return get_host_binary_path('libsimpleperf_report.so')
@@ -581,6 +621,76 @@ class ReportLib(object):
         if self._instance is None:
             raise Exception('Instance is Closed')
         return self._instance
+
+    def GetAllBuildIds(self) -> Dict[str, str]:
+        """Return a dictionary mapping all filenames to their build ids.
+        """
+        ids = self._GetAllBuildIds(self.getInstance())
+        if not ids:
+            return {}
+
+        result = {}
+        i = 0
+        while ids[i].filename:
+            filename = _char_pt_to_str(ids[i].filename)
+            # A build_id is always 20 bytes long.
+            build_id = f"0x{ids[i].build_id[0:20].hex()}"
+            result[filename] = build_id
+            i += 1
+
+        return result
+
+    def SetETMCallback(self, callback: Callable[[int, etm.GenericTraceElement], None]) -> None:
+        """Set the callback to be called while decoding ETM traces. The callback will be called
+           for every element. The callback will receive the following parameters:
+           trace_id: CoreSight Trace ID that identifies the trace source.
+           elem: the decoded element as etm_types.GenericTraceElement.
+        """
+        def inner(trace_id, elem):
+            callback(trace_id, elem.contents)
+
+        # Save the callback, preventing GC from taking it.
+        self.callback = self._ETMCallbackType(inner)
+        self._SetETMCallback(self.getInstance(), self.callback)
+
+    def ConvertETMAddressToVaddrInFile(self, trace_id: int, addr: int) -> Optional[Tuple[str, int]]:
+        """Given the trace id and a virtual address in an ETM trace, return a tuple containing the
+           path to the DSO and the offset inside it. If the address is not mapped, return
+           None.
+        """
+        v = self._ConvertETMAddressToVaddrInFile(self.getInstance(), trace_id, addr)
+        if v.path:
+            path = _char_pt_to_str(v.path)
+            return (path, v.offset)
+        return None
+
+    def GetThread(self, tid: int) -> Optional[Tuple[int, int, str]]:
+        """Return a tuple containing PID, TID and comm for the given TID. If the thread is not found, return
+           None.
+        """
+        r = self._GetThread(self.getInstance(), tid)
+        if r.pid != -1:
+            return (r.pid, r.tid, _char_pt_to_str(r.comm))
+        else:
+            return None
+
+    def GetSymbols(self, path: str) -> Optional[List[Tuple[int, int, str]]]:
+        """Return a list of symbols for path, in the form of tuples of start address,
+           length and name.
+        """
+        symbols = self._ReadSymbolsForPath(self.getInstance(), _char_pt(path))
+        if not symbols:
+            return None
+
+        i = 0
+        result = []
+        while symbols[i]._symbol_name:
+            result.append((symbols[i].symbol_addr,
+                           symbols[i].symbol_len,
+                           symbols[i].symbol_name))
+            i += 1
+
+        return result
 
 
 ProtoSample = namedtuple('ProtoSample', ['ip', 'pid', 'tid',
