@@ -166,7 +166,6 @@ class ProfileSessionImpl {
 
  private:
   std::string FindSimpleperf();
-  std::string FindSimpleperfInTempDir();
   void CheckIfPerfEnabled();
   std::string GetProperty(const std::string& name);
   void CreateSimpleperfDataDir();
@@ -336,41 +335,13 @@ static bool RunCmd(std::vector<const char*> args, std::string* stdout) {
 }
 
 std::string ProfileSessionImpl::FindSimpleperf() {
-  // 1. Try /data/local/tmp/simpleperf first. Probably it's newer than /system/bin/simpleperf.
-  std::string simpleperf_path = FindSimpleperfInTempDir();
-  if (!simpleperf_path.empty()) {
-    return simpleperf_path;
-  }
-  // 2. Try /system/bin/simpleperf, which is available on Android >= Q.
+  // Try /system/bin/simpleperf, which is available on Android >= Q.
   simpleperf_path = "/system/bin/simpleperf";
   if (IsExecutableFile(simpleperf_path)) {
     return simpleperf_path;
   }
   Abort("can't find simpleperf on device. Please run api_profiler.py.");
   return "";
-}
-
-std::string ProfileSessionImpl::FindSimpleperfInTempDir() {
-  const std::string path = "/data/local/tmp/simpleperf";
-  if (!IsExecutableFile(path)) {
-    return "";
-  }
-  // Copy it to app_dir to execute it.
-  const std::string to_path = app_data_dir_ + "/simpleperf";
-  if (!RunCmd({"/system/bin/cp", path.c_str(), to_path.c_str()}, nullptr)) {
-    return "";
-  }
-  // For apps with target sdk >= 29, executing app data file isn't allowed.
-  // For android R, app context isn't allowed to use perf_event_open.
-  // So test executing downloaded simpleperf.
-  std::string s;
-  if (!RunCmd({to_path.c_str(), "list", "sw"}, &s)) {
-    return "";
-  }
-  if (s.find("cpu-clock") == std::string::npos) {
-    return "";
-  }
-  return to_path;
 }
 
 void ProfileSessionImpl::CheckIfPerfEnabled() {

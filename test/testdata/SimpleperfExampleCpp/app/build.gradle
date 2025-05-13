@@ -3,12 +3,11 @@ plugins {
 }
 
 android {
-    compileSdkVersion 32
 
     defaultConfig {
         applicationId "simpleperf.example.cpp"
         minSdkVersion 24
-        targetSdkVersion 32
+        targetSdkVersion 33
         versionCode 1
         versionName "1.0"
 
@@ -41,6 +40,9 @@ android {
     buildFeatures {
         viewBinding true
     }
+    compileSdk 34
+    ndkVersion '27.1.12297006'
+    namespace 'simpleperf.example.cpp'
 }
 
 dependencies {

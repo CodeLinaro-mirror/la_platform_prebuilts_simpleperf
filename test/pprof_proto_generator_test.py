@@ -253,6 +253,41 @@ class TestPprofProtoGenerator(TestBase):
         source_filename = generator.get_string(function.source_filename_id)
         self.assertIn('two_functions.cpp', source_filename)
 
+    def test_inlined_function_names(self):
+        """ Test that we are getting correct function callstacks for inlined functions.
+        """
+        testdata_file = TestHelper.testdata_path("runtest_two_functions_arm64_inlined.data")
+        # Build binary_cache.
+        binary_cache_builder = BinaryCacheBuilder(TestHelper.ndk_path, False)
+        binary_cache_builder.build_binary_cache(testdata_file, [TestHelper.testdata_dir])
+
+        # Generate profile.
+        profile = self.generate_profile(None, [testdata_file])
+
+        CheckItem = namedtuple('CheckItem', ['func_name1', 'line1', 'func_name2', 'line2'])
+
+        check_items = {
+            0x40c8: CheckItem('Function1()', 9, 'main', 22),
+            0x40dc: CheckItem('Function2()', 16, 'main', 23),
+        }
+        results = {}
+
+        for location in profile.location:
+            mapping = profile.mapping[location.mapping_id - 1]
+            addr = location.address - mapping.memory_start + mapping.file_offset
+            if check_item := check_items.get(addr):
+                self.assertEqual(len(location.line), 2)
+                function1 = profile.function[location.line[0].function_id - 1]
+                line1 = location.line[0].line
+                function2 = profile.function[location.line[1].function_id - 1]
+                line2 = location.line[1].line
+                self.assertEqual(profile.string_table[function1.name], check_item.func_name1)
+                self.assertEqual(line1, check_item.line1)
+                self.assertEqual(profile.string_table[function2.name], check_item.func_name2)
+                self.assertEqual(line2, check_item.line2)
+                results[addr] = True
+        self.assertEqual(len(results), len(check_items))
+
     def test_comments(self):
         profile = self.generate_profile(None, ['perf_with_interpreter_frames.data'])
         comments = "\n".join([profile.string_table[i] for i in profile.comment])

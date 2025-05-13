@@ -1,13 +1,12 @@
 apply plugin: 'com.android.application'
 
 android {
-    compileSdkVersion 30
     defaultConfig {
         applicationId "simpleperf.demo.cpp_api"
         // Simpleperf suggests running on Android >= N.
         // (https://android.googlesource.com/platform/system/extras/+/master/simpleperf/doc/README.md#why-we-suggest-profiling-on-android-n-devices)
         minSdkVersion 24
-        targetSdkVersion 30
+        targetSdkVersion 33
         versionCode 1
         versionName "1.0"
         externalNativeBuild {
@@ -27,6 +26,8 @@ android {
             path "src/main/cpp/CMakeLists.txt"
         }
     }
+    compileSdk 34
+    namespace 'simpleperf.demo.cpp_api'
 }
 
 dependencies {
