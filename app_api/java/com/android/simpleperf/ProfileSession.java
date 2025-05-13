@@ -43,20 +43,21 @@ import java.util.stream.Collectors;
  *
  * <p>
  * Example:
- *   RecordOptions options = new RecordOptions();
- *   options.setDwarfCallGraph();
- *   ProfileSession session = new ProfileSession();
- *   session.StartRecording(options);
- *   Thread.sleep(1000);
- *   session.PauseRecording();
- *   Thread.sleep(1000);
- *   session.ResumeRecording();
- *   Thread.sleep(1000);
- *   session.StopRecording();
+ * RecordOptions options = new RecordOptions();
+ * options.setDwarfCallGraph();
+ * ProfileSession session = new ProfileSession();
+ * session.StartRecording(options);
+ * Thread.sleep(1000);
+ * session.PauseRecording();
+ * Thread.sleep(1000);
+ * session.ResumeRecording();
+ * Thread.sleep(1000);
+ * session.StopRecording();
  * </p>
  *
  * <p>
- * It throws an Error when error happens. To read error messages of simpleperf record
+ * It throws an Error when error happens. To read error messages of simpleperf
+ * record
  * process, filter logcat with `simpleperf`.
  * </p>
  */
@@ -80,7 +81,8 @@ public class ProfileSession {
 
     /**
      * @param appDataDir the same as android.content.Context.getDataDir().
-     *                   ProfileSession stores profiling data in appDataDir/simpleperf_data/.
+     *                   ProfileSession stores profiling data in
+     *                   appDataDir/simpleperf_data/.
      */
     public ProfileSession(@NonNull String appDataDir) {
         mAppDataDir = appDataDir;
@@ -120,6 +122,7 @@ public class ProfileSession {
 
     /**
      * Start recording.
+     *
      * @param options RecordOptions
      */
     public void startRecording(@NonNull RecordOptions options) {
@@ -128,6 +131,7 @@ public class ProfileSession {
 
     /**
      * Start recording.
+     *
      * @param args arguments for `simpleperf record` cmd.
      */
     public synchronized void startRecording(@NonNull List<String> args) {
@@ -173,7 +177,8 @@ public class ProfileSession {
     }
 
     /**
-     * Stop recording and generate a recording file under appDataDir/simpleperf_data/.
+     * Stop recording and generate a recording file under
+     * appDataDir/simpleperf_data/.
      */
     public synchronized void stopRecording() {
         if (mState != State.STARTED && mState != State.PAUSED) {
@@ -181,7 +186,8 @@ public class ProfileSession {
         }
         if (Build.VERSION.SDK_INT == Build.VERSION_CODES.P + 1
                 && mSimpleperfPath.equals(SIMPLEPERF_PATH_IN_IMAGE)) {
-            // The simpleperf shipped on Android Q contains a bug, which may make it abort if
+            // The simpleperf shipped on Android Q contains a bug, which may make it abort
+            // if
             // calling simpleperfProcess.destroy().
             destroySimpleperfProcessWithoutClosingStdin();
         } else {
@@ -225,12 +231,7 @@ public class ProfileSession {
     }
 
     private String findSimpleperf() {
-        // 1. Try /data/local/tmp/simpleperf. Probably it's newer than /system/bin/simpleperf.
-        String simpleperfPath = findSimpleperfInTempDir();
-        if (simpleperfPath != null) {
-            return simpleperfPath;
-        }
-        // 2. Try /system/bin/simpleperf, which is available on Android >= Q.
+        // Try /system/bin/simpleperf, which is available on Android >= Q.
         simpleperfPath = SIMPLEPERF_PATH_IN_IMAGE;
         if (isExecutableFile(simpleperfPath)) {
             return simpleperfPath;
@@ -241,41 +242,6 @@ public class ProfileSession {
     private boolean isExecutableFile(@NonNull String path) {
         File file = new File(path);
         return file.canExecute();
-    }
-
-    @Nullable
-    private String findSimpleperfInTempDir() {
-        String path = "/data/local/tmp/simpleperf";
-        File file = new File(path);
-        if (!file.isFile()) {
-            return null;
-        }
-        // Copy it to app dir to execute it.
-        String toPath = mAppDataDir + "/simpleperf";
-        try {
-            Process process = new ProcessBuilder()
-                    .command("cp", path, toPath).start();
-            process.waitFor();
-        } catch (Exception e) {
-            return null;
-        }
-        if (!isExecutableFile(toPath)) {
-            return null;
-        }
-        // For apps with target sdk >= 29, executing app data file isn't allowed.
-        // For android R, app context isn't allowed to use perf_event_open.
-        // So test executing downloaded simpleperf.
-        try {
-            Process process = new ProcessBuilder().command(toPath, "list", "sw").start();
-            process.waitFor();
-            String data = readInputStream(process.getInputStream());
-            if (!data.contains("cpu-clock")) {
-                return null;
-            }
-        } catch (Exception e) {
-            return null;
-        }
-        return toPath;
     }
 
     private void checkIfPerfEnabled() {
@@ -364,8 +330,8 @@ public class ProfileSession {
 
     @NonNull
     private String readReply() {
-        // Read one byte at a time to stop at line break or EOF. BufferedReader will try to read
-        // more than available and make us blocking, so don't use it.
+        // Read one byte at a time to stop at line break or EOF. BufferedReader will try
+        // to read more than available and make us blocking, so don't use it.
         String s = "";
         while (true) {
             int c = -1;
