@@ -19,3 +19,5 @@ target_link_libraries(
         native-lib
         PRIVATE
         ${log-lib})
+
+target_link_options(native-lib PRIVATE "-Wl,-z,max-page-size=16384")

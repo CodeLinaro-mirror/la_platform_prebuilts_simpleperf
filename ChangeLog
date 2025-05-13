@@ -1,3 +1,19 @@
+Build 13464643 (May 8, 2025)
+  Link simpleperf executable with dynamic libdexfile, which is only available on Android 12+. So
+  simpleperf executable now can't run on Android < 12. Please use simpleperf executable in previous
+  releases for Android < 12.
+record command:
+  Support raw events for Intel CPU PMU.
+  Add --uprobe to help recording uprobe events.
+  Limit data rate for TRBE-based ETM events.
+stat command:
+  Add --monitor-new-thread. It can report per-thread event counts for new threads.
+  Fix thread name for child command.
+report scripts:
+  Add report_etm.py and report_fuchsia.py for reporting ETM data.
+Document:
+  Add doc for collecting LBR data (x86 Architectures) for AutoFDO.
+
 Build 12821384 (Dec 19, 2024)
 record command:
   Add -z to compress the recording file. It can also compress ETM data.

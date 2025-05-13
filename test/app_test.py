@@ -42,7 +42,7 @@ class TestExampleBase(TestBase):
         cls.apk_path = apk_files[0]
         cls.package_name = package_name
         cls.activity_name = activity_name
-        args = ["install", "-r"]
+        args = ["install", "-r", "-t"]
         if abi:
             args += ["--abi", abi]
         args.append(cls.apk_path)

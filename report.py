@@ -31,15 +31,6 @@ import re
 import subprocess
 import sys
 
-try:
-    from tkinter import *
-    from tkinter.font import Font
-    from tkinter.ttk import *
-except ImportError:
-    from Tkinter import *
-    from tkFont import Font
-    from ttk import *
-
 from simpleperf_utils import *
 
 PAD_X = 3
@@ -195,6 +186,10 @@ class ReportWindow(object):
     """A window used to display report file."""
 
     def __init__(self, main, report_context, title_line, report_items):
+        from tkinter import Frame, Label, Scrollbar, X, Y, W, BOTTOM, LEFT, RIGHT, BOTH, HORIZONTAL
+        from tkinter.font import Font
+        from tkinter.ttk import Treeview
+
         frame = Frame(main)
         frame.pack(fill=BOTH, expand=1)
 
@@ -270,6 +265,8 @@ class ReportWindow(object):
 
 
 def display_report_file(report_file, self_kill_after_sec):
+    from tkinter import Tk, Toplevel
+
     fh = open(report_file, 'r')
     lines = fh.readlines()
     fh.close()
