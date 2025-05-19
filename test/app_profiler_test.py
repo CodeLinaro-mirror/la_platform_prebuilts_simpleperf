@@ -85,7 +85,7 @@ class TestNativeLibDownloader(TestBase):
         # Sync all native libs on device.
         downloader = NativeLibDownloader(self.ndk_path, 'arm64', self.adb)
         downloader.collect_native_libs_on_host(TestHelper.testdata_path(
-            'SimpleperfExampleCpp/app/build/intermediates/cmake/debug'))
+            'SimpleperfExampleCpp/app/build/intermediates'))
         self.assertEqual(len(downloader.host_build_id_map), 2)
         for entry in downloader.host_build_id_map.values():
             self.assertEqual(entry.score, 3)
