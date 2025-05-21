@@ -49,6 +49,7 @@ from . app_test import *
 from . binary_cache_builder_test import *
 from . cpp_app_test import *
 from . debug_unwind_reporter_test import *
+from . etm_stack_test import *
 from . gecko_profile_generator_test import *
 from . inferno_test import *
 from . java_app_test import *
@@ -129,6 +130,7 @@ def get_test_type(test: str) -> Optional[str]:
     if testcase_name in ('TestAnnotate',
                          'TestBinaryCacheBuilder',
                          'TestDebugUnwindReporter',
+                         'TestEtmStacker',
                          'TestInferno',
                          'TestPprofProtoGenerator',
                          'TestProtoFileReportLib',
