@@ -257,9 +257,13 @@ class BinaryCacheBuilder:
         self.binary_cache = BinaryCache(self.binary_cache_dir)
         self.binaries = {}
 
-    def build_binary_cache(self, perf_data_path: str, symfs_dirs: List[Union[Path, str]]) -> bool:
+    def build_binary_cache(self, perf_data_path: str, symfs_dirs: List[Union[Path, str]],
+                           every: bool = False) -> bool:
         self.binary_cache_dir.mkdir(exist_ok=True)
-        self.collect_used_binaries(perf_data_path)
+        if every:
+            self.collect_all_binaries(perf_data_path)
+        else:
+            self.collect_used_binaries(perf_data_path)
         if not self.copy_binaries_from_symfs_dirs(symfs_dirs):
             return False
         self.pull_binaries_from_device()
@@ -290,6 +294,24 @@ class BinaryCacheBuilder:
                         continue
                     name = 'vmlinux' if dso_name == '[kernel.kallsyms]' else dso_name
                     binaries[name] = lib.GetBuildIdForPath(dso_name)
+        self.binaries = binaries
+
+    def collect_all_binaries(self, perf_data_path: str) -> None:
+        """Read perf.data, and collect all binaries with build id, even if
+           they were not used in any samples.
+        """
+        binaries = {}
+        lib = ReportLib()
+        lib.SetRecordFile(perf_data_path)
+        lib.SetLogSeverity('error')
+
+        binaries = lib.GetAllBuildIds()
+
+        if '[kernel.kallsyms]' in binaries:
+            binaries['vmlinux'] = binaries['[kernel.kallsyms]']
+            del binaries['[kernel.kallsyms]']
+
+        lib.Close()
         self.binaries = binaries
 
     def copy_binaries_from_symfs_dirs(self, symfs_dirs: List[Union[str, Path]]) -> bool:
@@ -340,11 +362,13 @@ def main() -> bool:
     parser.add_argument('--disable_adb_root', action='store_true', help="""
         Force adb to run in non root mode.""")
     parser.add_argument('--ndk_path', nargs=1, help='Find tools in the ndk path.')
+    parser.add_argument('--every', action='store_true', help="""
+        Download every binary mentioned in the perf.data, not just those with samples.""")
     args = parser.parse_args()
     ndk_path = None if not args.ndk_path else args.ndk_path[0]
     builder = BinaryCacheBuilder(ndk_path, args.disable_adb_root)
     symfs_dirs = flatten_arg_list(args.native_lib_dir)
-    return builder.build_binary_cache(args.perf_data_path, symfs_dirs)
+    return builder.build_binary_cache(args.perf_data_path, symfs_dirs, args.every)
 
 
 if __name__ == '__main__':
