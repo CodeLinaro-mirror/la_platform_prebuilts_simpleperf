@@ -17,6 +17,7 @@
 
 """sample_filter.py: generate sample filter files, which can be passed in the
     --filter-file option when reporting.
+    Filter file format is shown in docs/sample_filter.md.
 
 Example:
   ./sample_filter.py -i perf.data --split-time-range 2 -o sample_filter

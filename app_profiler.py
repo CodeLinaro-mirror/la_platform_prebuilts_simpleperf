@@ -369,7 +369,7 @@ class AppProfiler(ProfilerBase):
         if self.args.launch or self.args.activity or self.args.test:
             self.kill_app_process()
         args = ['--app', self.args.app]
-        if self.app_versioncode:
+        if self.app_versioncode and self.android_version >= 12:
             args += ['--add-meta-info', f'app_versioncode={self.app_versioncode}']
         self.start_profiling(args)
         if self.args.launch:

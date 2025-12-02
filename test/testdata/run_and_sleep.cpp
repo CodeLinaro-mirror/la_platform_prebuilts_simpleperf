@@ -15,7 +15,7 @@ static inline uint64_t GetSystemClock() {
 constexpr int LOOP_COUNT = 100000000;
 uint64_t noinline RunFunction() {
   uint64_t start_time_in_ns = GetSystemClock();
-  for (volatile int i = 0; i < LOOP_COUNT; ++i) {
+  for (volatile int i = 0; i < LOOP_COUNT; i += 1) {
   }
   return GetSystemClock() - start_time_in_ns;
 }

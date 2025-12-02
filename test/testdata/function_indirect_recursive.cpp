@@ -3,7 +3,7 @@ constexpr int LOOP_COUNT = 5000000;
 void FunctionRecursiveTwo(int loop);
 
 void FunctionRecursiveOne(int loop) {
-  for (volatile int i = 0; i < LOOP_COUNT; ++i) {
+  for (volatile int i = 0; i < LOOP_COUNT; i += 1) {
   }
   if (loop >= 0) {
     FunctionRecursiveTwo(loop);
@@ -11,7 +11,7 @@ void FunctionRecursiveOne(int loop) {
 }
 
 void FunctionRecursiveTwo(int loop) {
-  for (volatile int i = 0; i < LOOP_COUNT; ++i) {
+  for (volatile int i = 0; i < LOOP_COUNT; i += 1) {
   }
   if (loop > 0) {
     FunctionRecursiveOne(loop - 1);

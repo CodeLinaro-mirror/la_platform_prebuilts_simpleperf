@@ -292,7 +292,11 @@ class PprofProfileGenerator(object):
 
         # Map from dso_name in perf.data to (binary path, build_id).
         self.binary_map = {}
-        self.read_elf = ReadElf(self.config['ndk_path'])
+        readelf_path = ToolFinder.find_tool_path('llvm-readelf', self.config['ndk_path'])
+        if not readelf_path:
+            self.read_elf = None
+        else:
+            self.read_elf = ReadElf(self.config['ndk_path'], readelf_path)
         self.binary_finder = BinaryFinder(config['binary_cache_dir'], self.read_elf)
 
     def load_record_file(self, record_file):

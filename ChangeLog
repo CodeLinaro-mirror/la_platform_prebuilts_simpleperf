@@ -1,3 +1,21 @@
+Build 14523392 (Dec 2, 2025)
+  Support simpleperf back to Android 10 (for NDK issue #2198). Please use simpleperf executable in
+  previous releases for Android < 10.
+record command:
+  Fix several issues of choosing between multiple ETR/TRBE sinks.
+inject command:
+  Fix several issues of converting ETM data to AutoFDO for kernel modules and apps.
+stat command:
+  Record thread name records for --per-thread.
+  Fix --monitor-new-thread for multi-process apps.
+report scripts:
+  Add --no-demangle to report raw symbols.
+Document:
+  Add doc for using tracepoint/kprobe/uprobe events.
+  Update doc for recording ETM data for AutoFDO for kernel.
+  Add doc for recording ETM data for AutoFDO for Apps and Kernel modules.
+
+
 Build 13464643 (May 8, 2025)
   Link simpleperf executable with dynamic libdexfile, which is only available on Android 12+. So
   simpleperf executable now can't run on Android < 12. Please use simpleperf executable in previous

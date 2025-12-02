@@ -94,10 +94,12 @@ in AutoFDO to build create_llvm_prof, then use `create_llvm_prof` to create prof
 
 ```sh
 # perf_inject_binary1.data is split from perf_inject.data, and only contains branch info for binary1.
-host $ create_llvm_prof -profile perf_inject_binary1.data -profiler text -binary path_of_binary1 -out a.prof -format binary
+host $ create_llvm_prof -profile perf_inject_binary1.data -profiler text -binary path_of_binary1 \
+       -out a.prof -format extbinary
 
 # perf_inject_kernel.data is split from perf_inject.data, and only contains branch info for [kernel.kallsyms].
-host $ create_llvm_prof -profile perf_inject_kernel.data -profiler text -binary vmlinux -out a.prof -format binary
+host $ create_llvm_prof -profile perf_inject_kernel.data -profiler text -binary vmlinux \
+       -out a.prof -format extbinary --prof_sym_list=false
 ```
 
 Then we can use a.prof for PGO during compilation, via `-fprofile-sample-use=a.prof`.
@@ -139,7 +141,8 @@ simpleperf I cmd_record.cpp:879] Aux data traced: 1,134,720
 ```sh
 # Build simpleperf tool on host.
 (host) <AOSP>$ make simpleperf_ndk
-(host) <AOSP>$ simpleperf inject -i branch_list.data -o perf_inject_etm_test_loop.data --symdir out/target/product/generic_arm64/symbols/system/bin
+(host) <AOSP>$ simpleperf inject -i branch_list.data -o perf_inject_etm_test_loop.data \
+               --symdir out/target/product/generic_arm64/symbols/system/bin
 (host) <AOSP>$ cat perf_inject_etm_test_loop.data
 14
 4000-4010:1
@@ -149,7 +152,9 @@ simpleperf I cmd_record.cpp:879] Aux data traced: 1,134,720
 // build_id: 0xa6fc5b506adf9884cdb680b4893c505a00000000
 // /data/local/tmp/etm_test_loop
 
-(host) <AOSP>$ create_llvm_prof -profile perf_inject_etm_test_loop.data -profiler text -binary out/target/product/generic_arm64/symbols/system/bin/etm_test_loop -out etm_test_loop.afdo -format binary
+(host) <AOSP>$ create_llvm_prof -profile perf_inject_etm_test_loop.data -profiler text \
+               -binary out/target/product/generic_arm64/symbols/system/bin/etm_test_loop \
+               -out etm_test_loop.afdo -format extbinary
 (host) <AOSP>$ ls -lh etm_test_loop.afdo
 rw-r--r-- 1 user group 241 Apr 30 09:52 etm_test_loop.afdo
 ```
@@ -252,8 +257,11 @@ section for more information.
 (host) $ ls -lh kernel.autofdo
 -rw-r--r-- 1 yabinc primarygroup 1.3M Oct 17 16:39 kernel.autofdo
 # Convert the AutoFDO profile to the LLVM profile format:
+# The --prof_sym_list=false flag is important for kernel profiles. Without it, clang
+# assumes any function not listed in the profile is cold. This can lead to unwanted
+# deoptimizations, even when -fprofile-sample-accurate is not enabled.
 (host) $ create_llvm_prof --profiler text --binary=vmlinux --profile=kernel.autofdo \
-				--out=kernel.llvm_profdata --format extbinary
+				--out=kernel.llvm_profdata --prof_sym_list=false --format extbinary
 (host) $ ls -lh kernel.llvm_profdata
 -rw-r--r-- 1 yabinc primarygroup 1.4M Oct 17 19:00 kernel.llvm_profdata
 ```
@@ -264,6 +272,227 @@ Integrate the generated kernel.llvm_profdata file into your kernel build process
 how to use this profile data with vmlinux can be found in
 [this Android kernel commit](https://android-review.googlesource.com/c/kernel/common/+/3293642).
 
+### A complete example: kernel module using DDK
+
+This example demonstrates how to collect ETM data for an Android kernel module on a device, convert
+it to an AutoFDO profile on the host machine, and then use that profile to build an optimized
+kernel module. We use a fake kernel module called zram. zram is built using [DDK](https://android.googlesource.com/kernel/build/+/refs/heads/main/kleaf/docs/ddk/main.md).
+
+**Step 1: Build zram with debug info for profiling**
+
+Ensure your `kernel/build` includes the necessary AutoFDO support.
+-  For `android15-6.6`, apply patches from https://android-review.googlesource.com/c/kernel/build/+/3790006/, https://android-review.googlesource.com/c/kernel/build/+/3790007 and https://android-review.googlesource.com/c/kernel/build/+/3790008.
+-  For `android16-6.12`, apply a patch from https://android-review.googlesource.com/c/kernel/build/+/3790008.
+
+Next, enable profiling debug info in `zram/BUILD.bazel`.
+
+```bazel
+# drivers/block/zram/BUILD.bazel
+ddk_module(
+    name = "zram",
+    srcs = [
+        "zcomp.c",
+        "zram_drv.c",
+    ],
+    out = "zram.ko",
+    ...
+    debug_info_for_profiling = True,  # Add this line
+)
+```
+
+Finally, build the kernel and flash the resulting image to your device. The unstripped `zram.ko`
+will only be used on host during the profile generation step.
+
+**Step 2: Collect ETM data for zram.ko on device**
+
+We can record ETM data for the whole kernel. But it's more effective to use an ETM address filter
+to only record ETM data for `zram.ko`.
+
+```sh
+(host) $ adb root && adb shell
+# Find address range for zram kernel module
+(device) $ setprop security.lower_kptr_restrict 1
+(device) $ cat /proc/sys/kernel/kptr_restrict
+0
+(device) $ cat /proc/modules | grep zram
+zram 61440 4 Live 0xffffffe3f682c000 (O)
+
+# The zram module address range is 0xffffffe3f682c000 - (0xffffffe3f682c000 + 61440).
+# We can use address filter to only record ETM data for instructions in address range.
+# While running `simpleperf record`, use the device to trigger using the zram kernel module.
+(device) $ simpleperf record -e cs-etm:k -a --log verbose --addr-filter "filter 0xffffffe3f682c000-0xffffffe3f683b000" -o /data/local/tmp/perf.data -z --duration 10 --no-dump-symbols
+...
+10-02 14:19:56.258 23149 23149 I simpleperf: cmd_record.cpp:904 Aux data traced: 48,820,784
+10-02 14:19:56.259 23149 23149 I simpleperf: cmd_record.cpp:896 Record compressed: 6.37 MB (original 143.09 MB, ratio 22)
+10-02 14:19:56.259 23149 23149 D simpleperf: cmd_record.cpp:974 Prepare recording time 0.506453 s, recording time 10.0094 s, stop recording time 0.0240939 s, post process time 3.68489 s.
+10-02 14:19:56.259 23149 23149 D simpleperf: command.cpp:291 command 'record' finished successfully
+
+# Pull perf.data on host.
+(host) $ adb pull /data/local/tmp/perf.data
+(host) $ simpleperf dump --dump-etm packet >dump.txt
+(host) $ cat dump.txt
+# Check if dump.txt has the following items:
+# Item 1: Map info and symbol addresses in memory for zram.ko
+record kernel_symbol: type 32769, misc 0x0, size 12408412
+  kallsyms: ffffffe3f7000000 T _text
+  ...
+record mmap: type 1, misc 0x1, size 88
+  pid 4294967295, tid 0, addr 0xffffffe3f682c000, len 0xf000
+  pgoff 0x0, filename [zram]
+  sample_id: pid 0, tid 0
+  sample_id: time 0
+  sample_id: id 66
+  sample_id: cpu 0, res 0
+# Item 2: ETM data for zram.ko
+Idx:4765; ID:1e; [0x95 0x88 0x69 ];	I_ADDR_S_IS0 : Address, Short, IS0.; Addr=0xFFFFFFE3F682D220 ~[0xD220]
+Idx:4768; ID:1e; [0xfe ];	I_ATOM_F3 : Atom format 3.; NEE
+Idx:4769; ID:1e; [0x95 0x0e ];	I_ADDR_S_IS0 : Address, Short, IS0.; Addr=0xFFFFFFE3F682D238 ~[0x38]
+Idx:4771; ID:1e; [0xff ];	I_ATOM_F3 : Atom format 3.; EEE
+Idx:4772; ID:1e; [0x95 0x3b ];	I_ADDR_S_IS0 : Address, Short, IS0.; Addr=0xFFFFFFE3F682D2EC ~[0xEC]
+# Item 3: Build Id of zram.ko
+  record build_id: type 67, misc 0x1, size 100
+    pid 4294967295
+    build_id 0x849418f220e69bec4dbff9254bbf34126011bd7f
+    filename [zram]
+```
+
+To get good coverage, you usually need to record multiple times and record for a longer duration
+each time. Multiple `perf.data` files can be merged into one when converting them to an AutoFDO
+profile, for example: `simpleperf inject -i perf1.data,perf2.data`.
+
+**Step 3: Convert ETM data to AutoFDO Profile on Host**
+
+We need the unstripped `zram.ko` having .debug_line section, with the same build id as the one
+running on device. Put it in a directory, like `unstripped`.
+
+```sh
+$ ls unstripped
+zram.ko
+# Check .debug_line section.
+$ readelf -SW unstripped/zram.ko
+[47] .debug_line       PROGBITS        0000000000000000 08c530 002e03 00   C  0   0  1
+# Check if build id matches the one recorded in perf.data.
+$ readelf -n unstripped/zram.ko
+    Build ID: 849418f220e69bec4dbff9254bbf34126011bd7f
+
+# Run `simpleperf inject` on host to convert perf.data to AutoFDO input file. It's fine to
+# use many perf.data input files.
+$ simpleperf inject -i perf.data -o perf_inject_zram.data --symdir unstripped
+
+# It's also fine to convert perf.data to branch list files on device or on host to reduce file size.
+$ simpleperf inject -i perf.data -o branch_zram.data --output branch-list
+$ simpleperf inject -i branch_zram.data -o perf_inject_zram.data --symdir unstripped
+
+# Check that we have a non-empty AutoFDO input file.
+# The addresses here are file offsets for instructions.
+$ cat perf_inject_zram.data
+185
+2cb8-2cc0:101
+2cbc-2cc0:9
+2cc0-2cc0:7
+2cc4-2ce0:227
+2cc8-2ce0:3
+2cd4-2ce0:5
+2cd8-2ce0:2
+2ce8-2ce8:238
+...
+7038->34bc:303
+7038->7038:159066
+7048->703c:158773
+7048->7080:159363
+7074->2000:318312
+// build_id: 0x849418f220e69bec4dbff9254bbf34126011bd7f
+// [zram]
+```
+
+The stock `create_llvm_prof` tool from the AutoFDO repository requires a patch to correctly process
+relocatable kernel modules (which lack program headers).
+-  Download AutoFDO source code at https://github.com/google/autofdo.git.
+- Apply the following patch:
+
+```diff
+diff --git a/addr2line.cc b/addr2line.cc
+index f8fe964..0951a3d 100644
+--- a/addr2line.cc
++++ b/addr2line.cc
+@@ -87,8 +87,17 @@ void LLVMAddr2line::GetInlineStack(uint64_t address, SourceStack *stack) const {
+   llvm::SmallVector<llvm::DWARFDie, 4> InlinedChain;
+   cu_iter->second->getInlinedChainForAddress(address, InlinedChain);
+
+-  uint32_t row_index = line_table->lookupAddress(
+-      {address, llvm::object::SectionedAddress::UndefSection});
++  uint64_t section_index = llvm::object::SectionedAddress::UndefSection;
++  for (const auto& sec : getObject()->sections()) {
++    if (!sec.isText() || sec.isVirtual())
++      continue;
++    if (address >= sec.getAddress()
++        && address < sec.getAddress() + sec.getSize()) {
++      section_index = sec.getIndex();
++      break;
++    }
++  }
++  uint32_t row_index = line_table->lookupAddress({address, section_index});
+   uint32_t file = (row_index == -1U ? -1U : line_table->Rows[row_index].File);
+   uint32_t line = (row_index == -1U ? 0 : line_table->Rows[row_index].Line);
+   uint32_t discriminator =
+diff --git a/symbol_map.cc b/symbol_map.cc
+index 2483835..b744f58 100644
+--- a/symbol_map.cc
++++ b/symbol_map.cc
+@@ -478,6 +478,14 @@ void SymbolMap::ReadLoadableExecSegmentInfo(bool is_kernel) {
+                 << " vaddr=" << info.vaddr;
+     }
+   }
++
++  if (si_vec.empty()) {
++    // It may be a kernel module. Create a fake segment for .text section.
++    ElfReader::SectionInfo info;
++    if (elf_reader.GetSectionInfoByName(".text", &info) != nullptr) {
++      add_loadable_exec_segment(info.offset, info.addr);
++    }
++  }
+ }
+
+ void SymbolMap::BuildSymbolMap() {
+```
+
+Then we can build and run `create_llvm_prof`.
+
+```sh
+# Run `create_llvm_prof` on host to convert AutoFDO input file to AutoFDO profile.
+$ create_llvm_prof -profile perf_inject_zram.data -profiler text \
+               -binary unstripped/zram.ko \
+               -out zram.afdo -format extbinary
+
+# Run `llvm_profdata` and verify profile.
+$ llvm-profdata show --sample --hot-func-list zram.afdo >zram_hot_functions.txt
+...
+6 out of 14 functions with profile (42.86%) are considered hot functions (max sample >= 157184).
+131343543 out of 131415332 profile counts (99.95%) are from hot functions.
+ Total sample (%)       Max sample        Entry sample    Function name
+ 37461663 (28.51%)      491516            165517          zram_slot_free_notify
+ 27545033 (20.96%)      635040            159363          rvh_swap_readpage_bdev_sync
+ 23754944 (18.08%)      317922            28              zcomp_decompress
+
+```
+
+**Step 4: Use the AutoFDO Profile when Building zram.ko**
+
+Copy zram.afdo to the source directory of zram. Modify zram/BUILD.bazel.
+
+```bazel
+ddk_module(
+    name = "zram",
+    srcs = [
+        "zcomp.c",
+        "zram_drv.c",
+    ],
+    out = "zram.ko",
+    ...
+    debug_info_for_profiling = True,  # Add this line to add debug info for profiling.
+    autofdo_profile = "zram.afdo",  # Add this line to apply AutoFDO profile.
+}
+```
 
 ## Convert ETM data for llvm-bolt (experiment)
 

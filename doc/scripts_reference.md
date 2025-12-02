@@ -398,3 +398,27 @@ $ gecko_profile_generator.py -i perf.data --filter-file sample_filter_part1 \
 $ gecko_profile_generator.py -i perf.data --filter-file sample_filter_part2 \
     | gzip >profile-part2.json.gz
 ```
+
+## sample_filter_for_perfetto_trace.py
+
+`sample_filter_for_perfetto_trace.py` generates sample filter files as documented in
+[sample_filter.md](https://android.googlesource.com/platform/system/extras/+/refs/heads/main/simpleperf/doc/sample_filter.md).
+
+This script reads a Perfetto trace file, finds all events matching a specified regular
+expression, and then generates a sample filter file containing the time ranges of those events.
+You can then use this filter file with other tools, like `pprof_proto_generator.py`, to analyze
+performance samples that occurred only during those specific time ranges. This is useful for
+focusing on periods of interest within a larger trace.
+
+```sh
+# Example: Filter samples based on a specific event in a Perfetto trace.
+$ sample_filter_for_perfetto_trace.py trace.perfetto-trace \
+    --event-filter-regex "CriticalEventRegex"
+# Now use the generated filter.txt with another script.
+$ pprof_proto_generator.py --filter-file filter.txt
+
+# Example: Use --global-event to create a single time range covering all matching events.
+$ sample_filter_for_perfetto_trace.py trace.perfetto-trace \
+    --event-filter-regex "GlobalCriticalEventRegex" --global-event
+$ pprof_proto_generator.py --filter-file filter.txt
+```
