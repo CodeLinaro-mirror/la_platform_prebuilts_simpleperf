@@ -83,24 +83,30 @@ def get_target_binary_path(arch: str, binary_name: str) -> str:
 
 
 def get_host_binary_path(binary_name: str) -> str:
-    dirname = os.path.join(get_script_dir(), 'bin')
+    in_dir_path = Path('bin')
     if is_windows():
         if binary_name.endswith('.so'):
             binary_name = binary_name[0:-3] + '.dll'
         elif '.' not in binary_name:
             binary_name += '.exe'
-        dirname = os.path.join(dirname, 'windows')
+        in_dir_path = in_dir_path / 'windows'
     elif sys.platform == 'darwin':  # OSX
         if binary_name.endswith('.so'):
             binary_name = binary_name[0:-3] + '.dylib'
-        dirname = os.path.join(dirname, 'darwin')
+        in_dir_path = in_dir_path / 'darwin'
     else:
-        dirname = os.path.join(dirname, 'linux')
-    dirname = os.path.join(dirname, 'x86_64' if sys.maxsize > 2 ** 32 else 'x86')
-    binary_path = os.path.join(dirname, binary_name)
-    if not os.path.isfile(binary_path):
-        log_fatal("can't find binary: %s" % binary_path)
-    return binary_path
+        in_dir_path = in_dir_path / 'linux'
+    in_dir_path = in_dir_path / ('x86_64' if sys.maxsize > 2 ** 32 else 'x86') / binary_name
+    # First search in <script_dir>/bin directory.
+    path1 = Path(get_script_dir()) / in_dir_path
+    if path1.is_file():
+        return str(path1)
+    # Then check sys.path[0]. When we are built into binaries like pprof_proto_generator,
+    # the bin directory is put in sys.path[0].
+    path2 = Path(sys.path[0]) / in_dir_path
+    if path2.is_file():
+        return str(path2)
+    log_fatal(f"can't find binary: {path1}")
 
 
 def is_executable_available(executable: str, option='--help') -> bool:
@@ -430,7 +436,7 @@ def open_report_in_browser(report_path: str):
 
 
 class BinaryFinder:
-    def __init__(self, binary_cache_dir: Optional[Union[Path, str]], readelf: ReadElf):
+    def __init__(self, binary_cache_dir: Optional[Union[Path, str]], readelf: Optional[ReadElf]):
         if isinstance(binary_cache_dir, str):
             binary_cache_dir = Path(binary_cache_dir)
         self.binary_cache_dir = binary_cache_dir
@@ -471,6 +477,8 @@ class BinaryFinder:
         return None
 
     def _check_path(self, path: Path, expected_build_id: Optional[str]) -> bool:
+        if not self.readelf:
+            return True
         if not self.readelf.is_elf_file(path):
             return False
         if expected_build_id is not None:
@@ -860,7 +868,8 @@ class Objdump(object):
             raw_output = subprocess.check_output([objdump_path, '-d', '--demangle', real_path])
             output = bytes_to_str(raw_output)
             for line in output.split('\n'):
-                match = re.match(r'^\s*([0-9A-Fa-f]+):', line)
+                # Exclude C:\ on Windows.
+                match = re.match(r'^\s*([0-9A-Fa-f]+):[^\\]', line)
                 if not match:
                     continue
                 addr = int(match.group(1), 16)
@@ -1013,10 +1022,13 @@ class Objdump(object):
 class ReadElf(object):
     """ A wrapper of readelf. """
 
-    def __init__(self, ndk_path: Optional[str]):
-        self.readelf_path = ToolFinder.find_tool_path('llvm-readelf', ndk_path)
-        if not self.readelf_path:
-            log_exit("Can't find llvm-readelf. " + NDK_ERROR_MESSAGE)
+    def __init__(self, ndk_path: Optional[str], readelf_path: Optional[str] = None):
+        if readelf_path:
+            self.readelf_path = readelf_path
+        else:
+            self.readelf_path = ToolFinder.find_tool_path('llvm-readelf', ndk_path)
+            if not self.readelf_path:
+                log_exit("Can't find llvm-readelf. " + NDK_ERROR_MESSAGE)
 
     @staticmethod
     def is_elf_file(path: Union[Path, str]) -> bool:
@@ -1174,6 +1186,7 @@ class ReportLibOptions:
     proguard_mapping_files: List[str]
     sample_filters: List[str]
     aggregate_threads: List[str]
+    no_demangle: bool
 
 
 class BaseArgumentParser(argparse.ArgumentParser):
@@ -1211,6 +1224,8 @@ class BaseArgumentParser(argparse.ArgumentParser):
             help="""Aggregate threads with names matching the same regex. As a result, samples from
                     different threads (like a thread pool) can be shown in one flamegraph.
                 """)
+        parser.add_argument('--no-demangle', action='store_true', help="""
+                Don't demangle symbol names""")
 
     def _add_sample_filter_options(
             self, group: Optional[Any] = None, with_pid_shortcut: bool = True):
@@ -1297,7 +1312,8 @@ class BaseArgumentParser(argparse.ArgumentParser):
             sample_filters = self._build_sample_filter(namespace)
             report_lib_options = ReportLibOptions(
                 namespace.show_art_frames, namespace.remove_method, namespace.trace_offcpu,
-                namespace.proguard_mapping_file, sample_filters, namespace.aggregate_threads)
+                namespace.proguard_mapping_file, sample_filters, namespace.aggregate_threads,
+                namespace.no_demangle)
             setattr(namespace, 'report_lib_options', report_lib_options)
 
         if not Log.initialized:

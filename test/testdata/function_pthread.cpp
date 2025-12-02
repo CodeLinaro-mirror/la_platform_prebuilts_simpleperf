@@ -6,13 +6,13 @@
 constexpr int LOOP_COUNT = 100000000;
 
 void* ChildThreadFunction(void*) {
-  for (volatile int i = 0; i < LOOP_COUNT; ++i) {
+  for (volatile int i = 0; i < LOOP_COUNT; i += 1) {
   }
   return nullptr;
 }
 
 void MainThreadFunction() {
-  for (volatile int i = 0; i < LOOP_COUNT; ++i) {
+  for (volatile int i = 0; i < LOOP_COUNT; i += 1) {
   }
 }
 

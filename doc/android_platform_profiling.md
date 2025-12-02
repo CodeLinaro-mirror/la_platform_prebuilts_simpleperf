@@ -119,3 +119,80 @@ Following is a boot-time profile example. From timestamp, the first sample is ge
 4.5s after booting.
 
 ![boot_time_profile](pictures/boot_time_profile.png)
+
+## Use tracepoint/kprobe/uprobe events to get callstacks for certain functions
+
+Simpleperf supports tracepoint events, kprobe events and uprobe events. tracepoint events are
+predefined locations in the kernel source code that act as hooks for tracing. kprobe events allows
+adding dynamic tracepoints for kernel functions. uprobe events allows adding dynamic tracepoints
+for userspace binary functions.
+
+Through simpleperf, we can get callstacks when certain tracepoint, kprobe or uprobe events happen.
+This can help us understand why these events happen. Following are some examples.
+
+```sh
+# We need `adb root` to monitor tracepoint/kprobe/uprobe events.
+(host) $ adb root
+# List all available tracepoint events.
+(device) $ simpleperf list tracepoint
+# Show options for kprobe/uprobe events.
+(device) $ simpleperf record --help
+--kprobe kprobe_event1,kprobe_event2,...
+             Add kprobe events during recording. The kprobe_event format is in
+             Documentation/trace/kprobetrace.rst in the kernel. Examples:
+               'p:myprobe do_sys_openat2 $arg2:string'   - add event kprobes:myprobe
+               'r:myretprobe do_sys_openat2 $retval:s64' - add event kprobes:myretprobe
+--uprobe uprobe_event1,uprobe_event2,...
+             Add uprobe events during recording. The uprobe_event format is in
+             Documentation/trace/uprobetracer.rst in the kernel. Examples:
+               'p:myprobe /system/lib64/libc.so:0x1000'
+                   - add event uprobes:myprobe
+               'r:myretprobe /system/lib64/libc.so:0x1000'
+                   - add event uprobes:myretprobe
+-e event1[:modifier1],event2[:modifier2],...
+             Select a list of events to record. An event can be:
+               1) an event name listed in `simpleperf list`;
+               2) a raw PMU event in rN format. N is a hex number.
+                  For example, r1b selects event number 0x1b.
+               3) a kprobe event added by --kprobe option.
+               4) a uprobe event added by --uprobe option.
+             Modifiers can be added to define how the event should be
+             monitored. Possible modifiers are:
+                u - monitor user space events only
+                k - monitor kernel space events only
+
+# To use tracepoint events, use -e to monitor them.
+# Example: Trace sched_process_exec event for system wide for 10 seconds, recording callstack and
+# field values (field values provide details of the event).
+(device) simpleperf record -e sched:sched_process_exec -g --duration 10 -a
+# The callstacks can be viewed by profiler UIs in `view_the_profile.md`.
+(host)$ report_html.py -i perf.data
+# The field values call be viewed by `report_sample.py` or `simpleperf dump`.
+(host)$ report_sample.py -i perf.data --show_tracing_data
+
+# To use kprobe events, use --kprobe to add kprobe events, and use -e to monitor them.
+# Example: Trace each sys_open syscall for command `sleep 1`, recording callstack, file path and
+# return value.
+(device)$ simpleperf record --kprobe \
+  'p:open do_sys_openat2 $arg2:string,r:open_ret do_sys_openat2 $retval:s64' \
+  -e kprobes:open,kprobes:open_ret -g -m 4096 sleep 1
+# The callstacks can be viewed by profiler UIs in `view_the_profile.md`.
+(host)$ report_html.py -i perf.data
+# The field values (file path and return value) call be viewed by `report_sample.py` or
+# `simpleperf dump`.
+(host)$ report_sample.py -i perf.data --show_tracing_data
+
+# To use uprobe events, use --uprobe to add uprobe events, and use -e to monitor them.
+# uprobe events needs one manual step to convert symbol names to virtual addresses in ELF file.
+# Hopefully we can automate it in simpleperf in the future.
+# Example: Trace pthread_mutex_lock and pthread_mutex_unlock for command `sleep 1`, recording
+# callstack.
+(device) $ readelf -sW /system/lib64/libc.so | grep pthread_mutex
+   222: 0000000000084db0   232 FUNC    GLOBAL DEFAULT   15 pthread_mutex_lock
+  1031: 0000000000085260   316 FUNC    GLOBAL DEFAULT   15 pthread_mutex_unlock
+(device) $ /system/bin/simpleperf record --uprobe \
+  "p:pthread_mutex_lock /system/lib64/libc.so:0x84db0,p:pthread_mutex_unlock /system/lib64/libc.so:0x85260"
+  -e uprobes:pthread_mutex_lock,uprobes:pthread_mutex_unlock -g -m 4096 sleep 1
+# The callstacks can be viewed by profiler UIs in `view_the_profile.md`.
+(host) gecko_profile_generator.py -i perf.data | gzip > gecko-profile.json.gz
+```

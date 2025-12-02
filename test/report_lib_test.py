@@ -377,6 +377,27 @@ class TestReportLib(TestBase):
         self.assertNotIn('AsyncTask #3', thread_names)
         self.assertNotIn('AsyncTask #4', thread_names)
 
+    def test_no_demangle(self):
+        """ Test using ReportLib.DisableDemangle(). """
+        record_file = TestHelper.testdata_path('perf_display_bitmaps.data')
+        self.report_lib.SetRecordFile(record_file)
+        def get_symbol_names() -> Set[str]:
+            symbol_names = set()
+            while self.report_lib.GetNextSample():
+                symbol = self.report_lib.GetSymbolOfCurrentSample()
+                symbol_names.add(symbol.symbol_name)
+            return symbol_names
+        symbol_names = get_symbol_names()
+        self.assertIn('art::InternTable::Table::VisitRoots(art::RootVisitor*)', symbol_names)
+        self.assertNotIn('_ZN3art11InternTable5Table10VisitRootsEPNS_11RootVisitorE', symbol_names)
+        self.report_lib.Close()
+        self.report_lib = ReportLib()
+        self.report_lib.SetRecordFile(record_file)
+        self.report_lib.DisableDemangle()
+        symbol_names = get_symbol_names()
+        self.assertNotIn('art::InternTable::Table::VisitRoots(art::RootVisitor*)', symbol_names)
+        self.assertIn('_ZN3art11InternTable5Table10VisitRootsEPNS_11RootVisitorE', symbol_names)
+
     def test_use_vmlinux(self):
         """ Test if we can use vmlinux in symfs_dir. """
         record_file = TestHelper.testdata_path('perf_test_vmlinux.data')
