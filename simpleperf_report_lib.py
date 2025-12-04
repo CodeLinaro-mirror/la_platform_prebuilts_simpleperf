@@ -301,6 +301,8 @@ def SetReportOptionsForReportLib(report_lib, options: ReportLibOptions):
         report_lib.SetSampleFilter(options.sample_filters)
     if options.aggregate_threads:
         report_lib.AggregateThreads(options.aggregate_threads)
+    if options.no_demangle:
+        report_lib.DisableDemangle()
 
 
 # pylint: disable=invalid-name
@@ -335,6 +337,7 @@ class ReportLib(object):
         self._SetSampleFilterFunc.restype = ct.c_bool
         self._AggregateThreadsFunc = self._lib.AggregateThreads
         self._AggregateThreadsFunc.restype = ct.c_bool
+        self._DisableDemangleFunc = self._lib.DisableDemangle
         self._GetNextSampleFunc = self._lib.GetNextSample
         self._GetNextSampleFunc.restype = ct.POINTER(SampleStruct)
         self._GetEventOfCurrentSampleFunc = self._lib.GetEventOfCurrentSample
@@ -498,6 +501,10 @@ class ReportLib(object):
             self.getInstance(),
             regex_array, len(thread_name_regex_list))
         _check(res, f'Failed to call AggregateThreads({thread_name_regex_list})')
+
+    def DisableDemangle(self):
+        """ Don't demangle symbol names. """
+        self._DisableDemangleFunc(self.getInstance())
 
     def GetNextSample(self) -> Optional[SampleStruct]:
         """ Return the next sample. If no more samples, return None. """

@@ -275,7 +275,8 @@ class TestRecordingRealApps(TestBase):
         self.check_symbol_in_record_file('PlayScene::DoFrame')
 
         # Check app versioncode.
-        report = ReportLib()
-        meta_info = report.MetaInfo()
-        self.assertEqual(meta_info.get('app_versioncode'), '1')
-        report.Close()
+        if TestHelper.android_version >= 12:
+            report = ReportLib()
+            meta_info = report.MetaInfo()
+            self.assertEqual(meta_info.get('app_versioncode'), '1')
+            report.Close()
