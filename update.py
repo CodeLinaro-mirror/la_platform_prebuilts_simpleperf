@@ -205,7 +205,7 @@ def unzip_simpleperf_scripts(zip_path: str):
 
     # Move scripts.
     for sub_path in Path('scripts').iterdir():
-        if sub_path.name not in ['bin', 'pylintrc', 'update.py', 'Android.bp']:
+        if sub_path.name not in ['bin', 'pylintrc', 'update.py', 'Android.bp', 'README.md']:
             shutil.move(sub_path, '.')
     remove('scripts')
     remove('inferno/Android.bp')
@@ -223,7 +223,11 @@ def unzip_simpleperf_scripts(zip_path: str):
     testdata_dir.mkdir()
     for source_dir in ['demo', 'runtest', 'testdata', 'test/script_testdata']:
         for sub_path in Path(source_dir).iterdir():
-            shutil.move(sub_path, testdata_dir)
+            try:
+                shutil.move(sub_path, testdata_dir)
+            except shutil.Error as e:
+                logger().warning(f'Error when copying {sub_path} to {testdata_dir}: {e}')
+                remove(sub_path)
         remove(source_dir)
     remove(testdata_dir / 'Android.bp')
 
