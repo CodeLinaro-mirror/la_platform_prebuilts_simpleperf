@@ -39,7 +39,7 @@ class InstallEntry(object):
         self.need_strip = need_strip
 
 
-MINGW = 'local:/ssd/android/ndk-master/prebuilts/gcc/linux-x86/host/x86_64-w64-mingw32-4.8/x86_64-w64-mingw32/'
+MINGW = 'local:' + THIS_DIR + '/../../prebuilts/gcc/linux-x86/host/x86_64-w64-mingw32-4.8/x86_64-w64-mingw32/'
 bin_install_list = [
     # simpleperf on device.
     InstallEntry('simpleperf_linux_arm64-trunk_staging',
