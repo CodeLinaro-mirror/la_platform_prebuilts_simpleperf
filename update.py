@@ -192,7 +192,7 @@ def install_entry(branch, build, install_dir, entry):
     exe_stat = os.stat(name)
     os.chmod(name, exe_stat.st_mode | stat.S_IEXEC)
     if need_strip:
-        check_call(['strip', name])
+        check_call(['llvm-strip', name])
     dir = os.path.dirname(install_path)
     if not os.path.isdir(dir):
         os.makedirs(dir)

@@ -19,8 +19,9 @@ import os
 from pathlib import Path
 
 from binary_cache_builder import BinaryCacheBuilder
-from simpleperf_utils import (Addr2Nearestline, AddrRange, BinaryFinder, Disassembly, Objdump,
-                              ReadElf, SourceFileSearcher, is_windows, remove)
+from simpleperf_utils import (
+    AdbHelper, Addr2Nearestline, AddrRange, BinaryFinder, Disassembly, Objdump,
+    ReadElf, SourceFileSearcher, is_windows, remove)
 from . test_utils import TestBase, TestHelper
 
 
@@ -453,3 +454,25 @@ ffffffc0089bbb34:      	stp	x29, x30, [sp, #-0x30]!
         # The binary should has a matched build id.
         path = binary_finder.find_binary('/' + elf_name, 'wrong_build_id')
         self.assertIsNone(path)
+
+class TestDeviceTools(TestBase):
+    def test_adb_stderr_logging(self):
+        adb = AdbHelper()
+        if not adb.is_device_available():
+            self.skipTest("No device available")
+
+        # Test that success doesn't log warning
+        try:
+            with self.assertLogs(level='WARNING') as cm:
+                adb.run_and_return_output(['shell', 'echo hello >&2'], log_stderr=True)
+            self.fail(f"Warning was logged on success: {cm.output}")
+        except AssertionError as e:
+            if "no logs of level WARNING or higher" not in str(e):
+                raise
+
+        # Test that failure still logs warning
+        with self.assertLogs(level='WARNING') as cm:
+            adb.run_and_return_output(['shell', 'non_existent_command_xyz'], log_stderr=True)
+        has_expected_log = any(
+            'non_existent_command_xyz' in log or 'not found' in log for log in cm.output)
+        self.assertTrue(has_expected_log)

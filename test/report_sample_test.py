@@ -19,7 +19,7 @@ import re
 import tempfile
 from typing import List, Optional, Set
 
-from . test_utils import TestBase, TestHelper
+from test.test_utils import TestBase, TestHelper, run_unit_tests
 from simpleperf_utils import remove
 
 
@@ -133,3 +133,7 @@ class TestReportSample(TestBase):
         report = self.get_record_data_string(
             'perf_with_interpreter_frames.data', ['--show-art-frames'])
         self.assertIn(art_frame_str, report)
+
+
+if __name__ == '__main__':
+    run_unit_tests('report_sample_test')

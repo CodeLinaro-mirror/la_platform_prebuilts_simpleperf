@@ -31,6 +31,7 @@ from simpleperf_utils import bytes_to_str, BinaryFinder, EtmContext, log_exit, R
 class Tracer:
     def __init__(self, lib: ReportLib, binary_finder: BinaryFinder, objdump: Objdump) -> None:
         self.abort = False
+        self.exception: Optional[BaseException] = None
 
         self.last_timestamp: Optional[int] = None
         self.lost_decoding = False
@@ -52,9 +53,15 @@ class Tracer:
 
         try:
             self.process(trace_id, elem)
-        except Exception as e:
+        except BaseException as e:
             self.abort = True
+            self.exception = e
             raise e
+
+    def _map_path(self, path: str) -> str:
+        if path == '[kernel.kallsyms]':
+            return 'vmlinux'
+        return path
 
     def reset_trace(self) -> None:
         self.context.clear()
@@ -101,8 +108,10 @@ class Tracer:
                 if mapped:
                     print("Trapped on:")
                     start_path, start_offset = mapped
-                    b = str(self.find_binary(start_path))
-                    self.print_disassembly(b, start_offset, start_offset)
+                    binary_path = self.find_binary(start_path)
+                    if not binary_path:
+                        log_exit(f"Failed to find binary for '{self._map_path(start_path)}'")
+                    self.print_disassembly(str(binary_path), start_offset, start_offset)
                 else:
                     print(f"Trapped on unmapped address {hex(elem.en_addr)}!")
             return
@@ -137,16 +146,15 @@ class Tracer:
         if error_messages:
             raise RuntimeError(' '.join(error_messages))
 
-        if start_path == '[kernel.kallsyms]':
-            start_path = 'vmlinux'
-
         cpu = (trace_id - 0x10) // 2
-        print(f'CPU{cpu} {start_path}: {hex(start_offset)} -> {hex(end_offset)}')
-        b = str(self.find_binary(start_path))
-        self.print_disassembly(b, start_offset, end_offset)
+        print(f'CPU{cpu} {self._map_path(start_path)}: {hex(start_offset)} -> {hex(end_offset)}')
+        binary_path = self.find_binary(start_path)
+        if not binary_path:
+            log_exit(f"Failed to find binary for '{self._map_path(start_path)}'")
+        self.print_disassembly(str(binary_path), start_offset, end_offset)
         if not elem.last_instr_cond and not elem.last_instr_exec:
             raise RuntimeError(f'Wrong binary! Unconditional branch at {hex(end_offset)}'
-                               f' in {start_path} was not taken!')
+                               f' in {self._map_path(start_path)} was not taken!')
 
     @functools.lru_cache
     def find_binary(self, path: str) -> Optional[Path]:
@@ -154,6 +162,8 @@ class Tracer:
         # it to ensure that the build ids match. This is too much to do in our hot loop, therefore
         # its result should be cached.
         buildid = self.lib.GetBuildIdForPath(path)
+        if not buildid:
+            buildid = None
         return self.binary_finder.find_binary(path, buildid)
 
     def print_disassembly(self, path: str, start: int, end: int) -> None:
@@ -169,6 +179,8 @@ class Tracer:
             return self.disassembly[path]
 
         dso_info = self.objdump.get_dso_info(path, None)
+        if not dso_info:
+            return {}
         self.disassembly[path] = self.objdump.disassemble_whole(dso_info)
         return self.disassembly[path]
 
@@ -207,6 +219,11 @@ def main() -> None:
         lib.SetETMCallback(callback)
         while not callback.abort and lib.GetNextSample():
             pass
+
+        if callback.abort and callback.exception:
+            if isinstance(callback.exception, SystemExit):
+                raise SystemExit(callback.exception.code) from None
+            raise callback.exception from None
 
         if callback.cycles:
             print("Total cycles:", callback.cycles)

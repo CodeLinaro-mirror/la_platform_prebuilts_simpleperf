@@ -56,6 +56,7 @@ from . java_app_test import *
 from . kotlin_app_test import *
 from . pprof_proto_generator_test import *
 from . purgatorio_test import *
+from . report_etm_test import *
 from . report_html_test import *
 from . report_lib_test import *
 from . report_sample_test import *
@@ -63,7 +64,10 @@ from . run_simpleperf_on_device_test import *
 from . sample_filter_test import *
 from . stackcollapse_test import *
 from . tools_test import *
-from . test_utils import TestHelper
+import test.test_utils
+
+# This makes sure the logging output is sent to the right place
+test.test_utils.IS_ATEST = False
 
 
 def get_args() -> argparse.Namespace:
@@ -123,7 +127,7 @@ def get_test_type(test: str) -> Optional[str]:
         return 'device_serialized_test'
     if testcase_name in (
         'TestApiProfiler', 'TestNativeProfiling', 'TestNativeLibDownloader',
-            'TestRecordingRealApps', 'TestRunSimpleperfOnDevice'):
+            'TestRecordingRealApps', 'TestRunSimpleperfOnDevice', 'TestDeviceTools'):
         return 'device_test'
     if testcase_name.startswith('TestExample'):
         return 'device_test'
@@ -135,6 +139,7 @@ def get_test_type(test: str) -> Optional[str]:
                          'TestPprofProtoGenerator',
                          'TestProtoFileReportLib',
                          'TestPurgatorio',
+                         'TestReportETM',
                          'TestReportHtml',
                          'TestReportLib',
                          'TestReportSample',
@@ -146,42 +151,9 @@ def get_test_type(test: str) -> Optional[str]:
     return None
 
 
-def build_testdata(testdata_dir: Path):
-    """ Collect testdata in testdata_dir.
-        In system/extras/simpleperf/scripts, testdata comes from:
-            <script_dir>/../testdata, <script_dir>/test/script_testdata, <script_dir>/../demo
-        In prebuilts/simpleperf, testdata comes from:
-            <script_dir>/test/testdata
-    """
-    testdata_dir.mkdir()
-
-    script_test_dir = Path(__file__).resolve().parent
-    script_dir = script_test_dir.parent
-
-    source_dirs = [
-        script_test_dir / 'script_testdata',
-        script_test_dir / 'testdata',
-        script_dir.parent / 'testdata',
-        script_dir.parent / 'demo',
-        script_dir.parent / 'runtest',
-    ]
-
-    for source_dir in source_dirs:
-        if not source_dir.is_dir():
-            continue
-        for src_path in source_dir.iterdir():
-            dest_path = testdata_dir / src_path.name
-            if dest_path.exists():
-                continue
-            if src_path.is_file():
-                shutil.copyfile(src_path, dest_path)
-            elif src_path.is_dir():
-                shutil.copytree(src_path, dest_path)
-
-
 def run_tests(tests: List[str]) -> bool:
     argv = [sys.argv[0]] + tests
-    test_runner = unittest.TextTestRunner(stream=TestHelper.log_fh, verbosity=0)
+    test_runner = unittest.TextTestRunner(stream=test.test_utils.TestHelper.log_fh, verbosity=0)
     test_program = unittest.main(argv=argv, testRunner=test_runner,
                                  exit=False, verbosity=0, module='test.do_test')
     return test_program.result.wasSuccessful()
@@ -196,8 +168,8 @@ def test_process_entry(tests: List[str], test_options: List[str], conn: mp.conne
     parser.add_argument('--test-dir', help='directory to store test results')
     args = parser.parse_args(test_options)
 
-    TestHelper.init(args.test_dir, args.testdata_dir,
-                    args.browser, args.ndk_path, args.device, conn)
+    test.test_utils.TestHelper.init(args.test_dir, args.testdata_dir,
+                                    args.browser, args.ndk_path, args.device, conn)
     run_tests(tests)
 
 
@@ -535,5 +507,5 @@ def main() -> bool:
     test_dir.mkdir(parents=True)
     # Switch to the test dir.
     os.chdir(test_dir)
-    build_testdata(Path('testdata'))
+    test.test_utils.build_testdata(Path('testdata'))
     return run_tests_in_child_process(tests, args)

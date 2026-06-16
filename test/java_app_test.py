@@ -48,7 +48,8 @@ class TestExampleJava(TestExampleBase):
         self.adb.check_run(['shell', 'am', 'start', '-n',
                             self.package_name + '/.MultiProcessActivity'])
         # Wait until both MultiProcessActivity and MultiProcessService set up.
-        time.sleep(3)
+        self.wait_for_pid(self.package_name)
+        self.wait_for_pid(self.package_name + ':multiprocess_service')
         self.run_app_profiler(start_activity=False)
         self.run_cmd(["report.py", "-o", "report.txt"])
         self.check_strings_in_file("report.txt", ["BusyService", "BusyThread"])
@@ -57,9 +58,10 @@ class TestExampleJava(TestExampleBase):
         if is_windows():
             return
         self.adb.check_run(['shell', 'am', 'start', '-n', self.package_name + '/.MainActivity'])
-        time.sleep(1)
+        self.wait_for_pid(self.package_name)
         args = [sys.executable, TestHelper.script_path("app_profiler.py"),
-                "--app", self.package_name, "-r", "--duration 10000", "--disable_adb_root"]
+                "--app", self.package_name, "-r", "--duration 10000", "--disable_adb_root",
+                '--unrepresentative_profile_debug_app']
         if TestHelper.ndk_path:
             args += ['--ndk_path', TestHelper.ndk_path]
         subproc = subprocess.Popen(args)
@@ -72,9 +74,10 @@ class TestExampleJava(TestExampleBase):
 
     def test_app_profiler_stop_after_app_exit(self):
         self.adb.check_run(['shell', 'am', 'start', '-n', self.package_name + '/.MainActivity'])
-        time.sleep(1)
+        self.wait_for_pid(self.package_name)
         args = [sys.executable, TestHelper.script_path('app_profiler.py'),
-                '--app', self.package_name, '-r', '--duration 10000', '--disable_adb_root']
+                '--app', self.package_name, '-r', '--duration 10000', '--disable_adb_root',
+                '--unrepresentative_profile_debug_app']
         if TestHelper.ndk_path:
             args += ['--ndk_path', TestHelper.ndk_path]
         subproc = subprocess.Popen(args)
@@ -87,7 +90,7 @@ class TestExampleJava(TestExampleBase):
     def test_app_profiler_with_ndk_path(self):
         # Although we pass an invalid ndk path, it should be able to find tools in default ndk path.
         self.run_cmd(['app_profiler.py', '--app', self.package_name, '-a', self.activity_name,
-                      '--ndk_path', '.'])
+                      '--ndk_path', '.', '--unrepresentative_profile_debug_app'])
 
     def test_report(self):
         self.common_test_report()
@@ -98,9 +101,7 @@ class TestExampleJava(TestExampleBase):
 
     def test_profile_with_process_id(self):
         self.adb.check_run(['shell', 'am', 'start', '-n', self.package_name + '/.MainActivity'])
-        time.sleep(1)
-        pid = self.adb.check_run_and_return_output(
-            ['shell', 'pidof', 'simpleperf.example.java']).strip()
+        pid = str(self.wait_for_pid(self.package_name))
         self.run_app_profiler(start_activity=False, record_arg='-g --duration 10 -p ' + pid)
         self.run_cmd(["report.py", "-g", "-o", "report.txt"])
         self.check_strings_in_file("report.txt", [
@@ -151,7 +152,8 @@ class TestExampleJava(TestExampleBase):
         os.mkdir(test_dir)
         os.chdir(test_dir)
         self.run_cmd(['app_profiler.py', '--app', self.package_name,
-                      '-r', '-e task-clock:u -g --duration 3'])
+                      '-r', '-e task-clock:u -g --duration 3',
+                      '--unrepresentative_profile_debug_app'])
         self.check_exist(filename="perf.data")
         self.run_cmd([INFERNO_SCRIPT, "-sc"])
 
@@ -177,13 +179,13 @@ class TestExampleJavaProfileableApk(TestExampleJava):
     """ Test profiling a profileable released apk."""
     @classmethod
     def setUpClass(cls):
-        if TestHelper.android_version >= 10:
+        if TestHelper.meets_min_android_version():
             cls.prepare("SimpleperfExampleJava",
                         "simpleperf.example.java",
                         ".MainActivity", apk_name='app-release.apk')
 
     def setUp(self):
-        if TestHelper().android_version < 10:
+        if not TestHelper.meets_min_android_version():
             raise unittest.SkipTest("Profileable apk isn't supported on Android < Q.")
         super().setUp()
 

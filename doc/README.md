@@ -7,7 +7,7 @@ Most users will prefer to use that instead of using Simpleperf directly.
 Simpleperf is a native CPU profiling tool for Android. It can be used to profile
 both Android applications and native processes running on Android. It can
 profile both Java and C++ code on Android. The simpleperf executable can run on Android >=L,
-and Python scripts can be used on Android >= N.
+and Python scripts can be used on Android >= Q.
 
 Simpleperf is part of the Android Open Source Project.
 The source code is [here](https://android.googlesource.com/platform/system/extras/+/main/simpleperf/).
@@ -337,3 +337,4 @@ $ cp out/target/product/generic_arm64/system/bin/simpleperf_ndk64 system/extras/
 ```
 
 Then you can try the latest simpleperf scripts and binaries in system/extras/simpleperf/scripts.
+
