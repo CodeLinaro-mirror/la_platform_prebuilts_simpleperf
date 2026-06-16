@@ -29,7 +29,7 @@ import sys
 from bokeh.embed import components
 from bokeh.io import output_file, show
 from bokeh.layouts import layout, Spacer
-from bokeh.models import ColumnDataSource, CustomJS, WheelZoomTool, HoverTool, CustomJSTickFormatter
+from bokeh.models import ColumnDataSource, CustomJS, WheelZoomTool, HoverTool, CustomJSTickFormatter, DataRange1d
 from bokeh.models.widgets import DataTable, DateFormatter, TableColumn
 from bokeh.models.ranges import FactorRange
 from bokeh.palettes import Category20b
@@ -47,48 +47,60 @@ from simpleperf_utils import BaseArgumentParser
 # fmt: on
 
 
-def create_graph(args, source, data_range):
+def create_graph(args, source, x_data_range, y_range):
     graph = figure(
-        sizing_mode='stretch_both', x_range=data_range,
-        tools=['pan', 'wheel_zoom', 'ywheel_zoom', 'xwheel_zoom', 'reset', 'tap', 'box_select'],
-        active_drag='box_select', active_scroll='wheel_zoom',
+        sizing_mode='stretch_both',
+        x_range=x_data_range,
+        y_range=y_range,
+        tools=['pan', 'wheel_zoom', 'ywheel_zoom',
+               'xwheel_zoom', 'reset', 'tap', 'box_select'],
+        active_drag='box_select',
+        active_scroll='wheel_zoom',
         tooltips=[('thread', '@thread'),
                   ('callchain', '@callchain{safe}')],
-        title=args.title, name='graph')
+        title=args.title,
+        name='graph',
+    )
 
     # a crude way to avoid process name cluttering at some zoom levels.
     # TODO: remove processes from the ticker base on the number of samples currently visualized.
     # The process with most samples visualized should always be visible on the ticker
-    graph.xaxis.formatter = CustomJSTickFormatter(args={'range': data_range, 'graph': graph}, code="""
-    var pixels_per_entry = graph.inner_height / (range.end - range.start) //Do not rond end and start here
-    var entries_to_skip = Math.ceil(12 / pixels_per_entry) // kind of 12 px per entry
-    var desc = tick.split(/:| /)
-    // desc[0] == desc[1] for main threads
-    var keep = (desc[0] == desc[1]) &&
-      !(desc[2].includes('unknown') ||
-        desc[2].includes('Binder')  ||
-        desc[2].includes('kworker'))
+    graph.xaxis.formatter = CustomJSTickFormatter(args={'range': x_data_range, 'graph': graph}, code="""
+var inner_height = 600;
+try {
+    inner_height = graph.inner_height;
+} catch (e) {}
+var pixels_per_entry = inner_height / (range.end - range.start) //Do not round end and start here
+var entries_to_skip = Math.ceil(12 / pixels_per_entry) // kind of 12 px per entry
+var desc = tick.split(/:| /)
+// desc[0] == desc[1] for main threads
+var keep = (desc[0] == desc[1]) &&
+    !(desc[2].includes('unknown') ||
+    desc[2].includes('Binder')  ||
+    desc[2].includes('kworker'))
 
-    if (pixels_per_entry < 8 && !keep) {
-      //if (index + Math.round(range.start)) % entries_to_skip != 0) {
-      return ""
-    }
+if (pixels_per_entry < 8 && !keep) {
+    //if (index + Math.round(range.start)) % entries_to_skip != 0) {
+    return ""
+}
 
-    return tick """)
+return tick
+    """)
 
     graph.xaxis.major_label_orientation = math.pi/6
 
-    graph.circle(y='time',
-                 x='thread',
-                 source=source,
-                 color='color',
-                 alpha=0.3,
-                 selection_fill_color='White',
-                 selection_line_color='Black',
-                 selection_line_width=0.5,
-                 selection_alpha=1.0)
+    graph.scatter(y='time',
+                  x='thread',
+                  source=source,
+                  color='color',
+                  alpha=0.3,
+                  size=8,
+                  selection_fill_color='White',
+                  selection_line_color='Black',
+                  selection_line_width=0.5,
+                  selection_alpha=1.0)
 
-    graph.y_range.range_padding = 0
+    graph.y_range.range_padding = 0.5
     graph.xgrid.grid_line_color = None
     return graph
 
@@ -107,8 +119,6 @@ def create_table(graph):
 
     # start with a small table size (stretch doesn't reduce from the preferred size)
     table = DataTable(
-        width=100,
-        height=100,
         sizing_mode='stretch_both',
         source=table_source,
         columns=columns,
@@ -118,7 +128,8 @@ def create_table(graph):
     graph_selection_cb = CustomJS(code='update_selections()')
 
     graph_source.selected.js_on_change('indices', graph_selection_cb)
-    table_source.selected.js_on_change('indices', CustomJS(args={}, code='update_flamegraph()'))
+    table_source.selected.js_on_change(
+        'indices', CustomJS(args={}, code='update_flamegraph()'))
 
     return table
 
@@ -205,7 +216,8 @@ def generate_datasource(args):
         if sample_time > end_time:
             end_time = sample_time
 
-        thread_desc = ThreadDescriptor(sample.pid, sample.tid, sample.thread_comm)
+        thread_desc = ThreadDescriptor(
+            sample.pid, sample.tid, sample.thread_comm)
 
         threads.append(str(thread_desc))
 
@@ -259,19 +271,23 @@ def generate_datasource(args):
             'callchain': callchains,
             'color': colors}
 
-    source = ColumnDataSource(data)
+    source = ColumnDataSource(data=data)
 
     return source, data_range
 
 
 def main():
     parser = BaseArgumentParser()
-    parser.add_argument('-i', '--input_file', type=str, required=True, help='input file')
+    parser.add_argument('-i', '--input_file', type=str,
+                        required=True, help='input file')
     parser.add_argument('--title', '-t', type=str, help='document title')
-    parser.add_argument('--ksyms', '-k', type=str, help='path to kernel symbols (kallsyms)')
-    parser.add_argument('--usyms', '-u', type=str, help='path to tree with user space symbols')
+    parser.add_argument('--ksyms', '-k', type=str,
+                        help='path to kernel symbols (kallsyms)')
+    parser.add_argument('--usyms', '-u', type=str,
+                        help='path to tree with user space symbols')
     parser.add_argument('--output', '-o', type=str, help='output file')
-    parser.add_argument('--dont_open', '-d', action='store_true', help='Don\'t open output file')
+    parser.add_argument('--dont_open', '-d',
+                        action='store_true', help='Don\'t open output file')
     parser.add_argument('--include_dso_names', '-n', action='store_true',
                         help='Include dso names in backtraces')
     parser.add_argument('--include_symbols_addr', '-s', action='store_true',
@@ -282,14 +298,16 @@ def main():
 
     # TODO test hierarchical ranges too
     source, data_range = generate_datasource(args)
-
-    graph = create_graph(args, source, data_range)
+    time_range = DataRange1d(start=0, end=max(
+        source.data['time']), bounds=(-1, max(source.data['time']) + 64), range_padding=.16)
+    graph = create_graph(args, source, data_range, time_range)
     table = create_table(graph)
 
     output_filename = args.output
 
     if not output_filename:
-        output_filename = os.path.splitext(os.path.basename(args.input_file))[0] + '.html'
+        output_filename = os.path.splitext(
+            os.path.basename(args.input_file))[0] + '.html'
 
     title = os.path.splitext(os.path.basename(output_filename))[0]
 

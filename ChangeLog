@@ -1,3 +1,23 @@
+Build 15655211 (June 16, 2026)
+  Support Linux arm64 host for running simpleperf.
+app_api:
+  Fix a scope issue of simpleperfPath in ProfileSession.java.
+app_profiler.py:
+  Prevent profiling a debug build of an app by default on Android >= 12.
+  Add --unrepresentative_profile_debug_app option to allow profiling debug builds.
+  Optimize app version code retrieval by filtering the package list.
+pprof_proto_generator.py:
+  Include CPU core info for each sample in the exported pprof profile.
+  Clean up and format meta-information keys in the output comments.
+purgatorio:
+  Improve scatter visualization and process name ticker formatting to avoid cluttering.
+simpleperf_report_lib.py:
+  Add support for de-obfuscating Java method names using Proguard mapping files in ProtoFileReportLib.
+  Populate ip field in ProtoSample and ProtoCallChain using vaddr_in_file.
+  Improve native library loading on Windows and support arm64 hosts.
+  Fix a memory corruption crash when demangling Rust symbols.
+
+
 Build 14523392 (Dec 2, 2025)
   Support simpleperf back to Android 10 (for NDK issue #2198). Please use simpleperf executable in
   previous releases for Android < 10.

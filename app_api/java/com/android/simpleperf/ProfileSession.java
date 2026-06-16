@@ -92,6 +92,7 @@ public class ProfileSession {
     /**
      * ProfileSession assumes appDataDir as /data/data/app_package_name.
      */
+    @SuppressWarnings("SdCardPath")
     public ProfileSession() {
         String packageName;
         try {

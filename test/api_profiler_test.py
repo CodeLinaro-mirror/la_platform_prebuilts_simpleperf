@@ -40,13 +40,9 @@ class TestApiProfiler(TestBase):
             # Enable perf_harden to check if profile_app_uid property works.
             adb.set_property('security.perf_harden', '1')
         adb.check_run(['shell', 'am', 'start', '-n', package_name + '/.MainActivity'])
-        # step 3: Wait until the app exits.
-        time.sleep(4)
-        while True:
-            result = adb.run(['shell', 'pidof', package_name])
-            if not result:
-                break
-            time.sleep(1)
+        # step 3: Wait until the app starts and exits.
+        self.wait_for_pid(package_name, to_exit=False)
+        self.wait_for_pid(package_name, to_exit=True)
         # step 4: Collect recording data.
         remove('simpleperf_data')
         self.run_cmd(['api_profiler.py', 'collect', '-p', package_name, '-o', 'simpleperf_data'])

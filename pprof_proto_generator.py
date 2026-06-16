@@ -262,6 +262,30 @@ class Function(object):
         return (self.name_id, self.dso_name_id)
 
 
+def format_meta_key(key: str) -> str:
+    key_map = {
+        'app_versioncode': 'App Version Code',
+        'app_type': 'App Type',
+        'android_version': 'Android Version',
+        'android_sdk_version': 'Android SDK Version',
+        'android_build_type': 'Android Build Type',
+        'android_build_fingerprint': 'Android Build Fingerprint',
+        'kernel_version': 'Kernel Version',
+        'product_props': 'Product Props',
+        'record_stat': 'Record Stat',
+        'trace_offcpu': 'Trace Offcpu',
+        'app_package_name': 'App Package Name',
+        'system_wide_collection': 'System Wide Collection',
+        'simpleperf_version': 'Simpleperf Version',
+        'event_type_info': 'Event Type Info',
+        'clockid': 'Clock ID',
+        'kernel_symbols_available': 'Kernel Symbols Available',
+    }
+    if key in key_map:
+        return key_map[key]
+    return key.replace('_', ' ').title()
+
+
 # pylint: disable=no-member
 class PprofProfileGenerator(object):
 
@@ -318,12 +342,12 @@ class PprofProfileGenerator(object):
             "Architecture:\n" + self.lib.GetArch(),
         ]
         meta_info = self.lib.MetaInfo()
-        if "app_versioncode" in meta_info:
-            comments.append("App Version Code:\n" + meta_info["app_versioncode"])
+        for key, value in meta_info.items():
+            if key == 'timestamp':
+                self.profile.time_nanos = int(value) * 1000 * 1000 * 1000
+            comments.append(f"{format_meta_key(key)}:\n{value}")
         for comment in comments:
             self.profile.comment.append(self.get_string_id(comment))
-        if "timestamp" in meta_info:
-            self.profile.time_nanos = int(meta_info["timestamp"]) * 1000 * 1000 * 1000
 
         numbers_re = re.compile(r"\d+")
 
@@ -360,6 +384,9 @@ class PprofProfileGenerator(object):
             sample.labels.append(Label(
                 self.get_string_id("tid"),
                 self.get_string_id(str(report_sample.tid))))
+            sample.labels.append(Label(
+                self.get_string_id("cpu"),
+                self.get_string_id(str(report_sample.cpu))))
             if self._filter_symbol(symbol):
                 location_id = self.get_location_id(report_sample.ip, symbol)
                 sample.add_location_id(location_id)

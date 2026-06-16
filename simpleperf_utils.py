@@ -27,8 +27,10 @@ import logging
 import os
 import os.path
 from pathlib import Path
+import platform
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -39,7 +41,13 @@ NDK_ERROR_MESSAGE = "Please install the Android NDK (https://developer.android.c
 
 
 def get_script_dir() -> str:
-    return os.path.dirname(os.path.realpath(__file__))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def get_android_top() -> Path | None:
+    """Returns the Android build top directory as a Path object."""
+    top = os.environ.get('ANDROID_BUILD_TOP')
+    return Path(top) if top else None
 
 
 def is_windows() -> bool:
@@ -49,13 +57,17 @@ def is_windows() -> bool:
 def is_darwin() -> bool:
     return sys.platform == 'darwin'
 
+def is_linux_arm64() -> bool:
+    return sys.platform == 'linux' and platform.machine() == 'aarch64'
 
 def get_platform() -> str:
     if is_windows():
-        return 'windows'
+        return 'windows-x86_64'
     if is_darwin():
-        return 'darwin'
-    return 'linux'
+        return 'darwin-x86_64'
+    if is_linux_arm64():
+        return 'linux-arm64'
+    return 'linux-x86_64'
 
 
 def str_to_bytes(str_value: str) -> bytes:
@@ -82,13 +94,14 @@ def get_target_binary_path(arch: str, binary_name: str) -> str:
     return binary_path
 
 
-def get_host_binary_path(binary_name: str) -> str:
+def get_host_binary_path(binary_name: str, check: bool = True) -> Optional[str]:
     in_dir_path = Path('bin')
     if is_windows():
         if binary_name.endswith('.so'):
             binary_name = binary_name[0:-3] + '.dll'
         elif '.' not in binary_name:
             binary_name += '.exe'
+
         in_dir_path = in_dir_path / 'windows'
     elif sys.platform == 'darwin':  # OSX
         if binary_name.endswith('.so'):
@@ -96,17 +109,36 @@ def get_host_binary_path(binary_name: str) -> str:
         in_dir_path = in_dir_path / 'darwin'
     else:
         in_dir_path = in_dir_path / 'linux'
-    in_dir_path = in_dir_path / ('x86_64' if sys.maxsize > 2 ** 32 else 'x86') / binary_name
+
+    if platform.machine() == 'aarch64':
+        arch_dir = 'arm64'
+    else:
+        arch_dir = 'x86_64' if sys.maxsize > 2 ** 32 else 'x86'
+
+    in_dir_path = in_dir_path / arch_dir / binary_name
+    script_dir = Path(get_script_dir())
+
     # First search in <script_dir>/bin directory.
-    path1 = Path(get_script_dir()) / in_dir_path
-    if path1.is_file():
-        return str(path1)
+    path1 = script_dir / in_dir_path
     # Then check sys.path[0]. When we are built into binaries like pprof_proto_generator,
     # the bin directory is put in sys.path[0].
     path2 = Path(sys.path[0]) / in_dir_path
-    if path2.is_file():
-        return str(path2)
-    log_fatal(f"can't find binary: {path1}")
+    # Then check the parent of <script_dir> (useful in Soong sandbox where data is at root).
+    path_parent = script_dir.parent / in_dir_path
+
+    for p in [path1, path2, path_parent]:
+        if p.is_file():
+            if not os.access(p, os.X_OK):
+                path2.chmod(p.stat().st_mode | stat.S_IXUSR)
+            return str(p)
+
+    # If binary is in the path use it.
+    if shutil.which(binary_name):
+        return binary_name
+
+    if check:
+        log_fatal(f"can't find binary: {path1}")
+    return None
 
 
 def is_executable_available(executable: str, option='--help') -> bool:
@@ -123,36 +155,37 @@ def is_executable_available(executable: str, option='--help') -> bool:
 class ToolFinder:
     """ Find tools in ndk or sdk. """
     DEFAULT_SDK_PATH = {
-        'darwin': 'Library/Android/sdk',
-        'linux': 'Android/Sdk',
-        'windows': 'AppData/Local/Android/sdk',
+        'darwin-x86_64': 'Library/Android/sdk',
+        'linux-x86_64': 'Android/Sdk',
+        'linux-arm64': 'Android/Sdk',
+        'windows-x86_64': 'AppData/Local/Android/sdk',
+    }
+
+    CLANG_DIR = {
+        'linux-x86_64': 'linux-x86',
+        'linux-arm64': 'linux-arm64',
     }
 
     EXPECTED_TOOLS = {
         'adb': {
-            'is_binutils': False,
             'test_option': 'version',
             'path_in_sdk': 'platform-tools/adb',
         },
         'llvm-objdump': {
-            'is_binutils': False,
             'path_in_ndk':
-                lambda platform: 'toolchains/llvm/prebuilt/%s-x86_64/bin/llvm-objdump' % platform,
+                lambda platform: 'toolchains/llvm/prebuilt/%s/bin/llvm-objdump' % platform,
         },
         'llvm-readelf': {
-            'is_binutils': False,
             'path_in_ndk':
-                lambda platform: 'toolchains/llvm/prebuilt/%s-x86_64/bin/llvm-readelf' % platform,
+                lambda platform: 'toolchains/llvm/prebuilt/%s/bin/llvm-readelf' % platform,
         },
         'llvm-symbolizer': {
-            'is_binutils': False,
             'path_in_ndk':
-                lambda platform: 'toolchains/llvm/prebuilt/%s-x86_64/bin/llvm-symbolizer' % platform,
+                lambda platform: 'toolchains/llvm/prebuilt/%s/bin/llvm-symbolizer' % platform,
         },
         'llvm-strip': {
-            'is_binutils': False,
             'path_in_ndk':
-                lambda platform: 'toolchains/llvm/prebuilt/%s-x86_64/bin/llvm-strip' % platform,
+                lambda platform: 'toolchains/llvm/prebuilt/%s/bin/llvm-strip' % platform,
         },
     }
 
@@ -199,55 +232,41 @@ class ToolFinder:
         return None
 
     @classmethod
-    def _get_binutils_path_in_ndk(cls, toolname: str, arch: Optional[str], platform: str
-                                  ) -> Tuple[str, str]:
-        if not arch:
-            arch = 'arm64'
-        if arch == 'arm64':
-            name = 'aarch64-linux-android-' + toolname
-        elif arch == 'arm':
-            name = 'arm-linux-androideabi-' + toolname
-        elif arch == 'x86_64':
-            name = 'x86_64-linux-android-' + toolname
-        elif arch == 'x86':
-            name = 'i686-linux-android-' + toolname
-        else:
-            log_fatal('unexpected arch %s' % arch)
-        path = 'toolchains/llvm/prebuilt/%s-x86_64/bin/%s' % (platform, name)
-        return (name, path)
-
-    @classmethod
-    def find_tool_path(cls, toolname: str, ndk_path: Optional[str] = None,
-                       arch: Optional[str] = None) -> Optional[str]:
+    def find_tool_path(cls, toolname: str, ndk_path: Optional[str] = None) -> Optional[str]:
         tool_info = cls.EXPECTED_TOOLS.get(toolname)
         if not tool_info:
             return None
 
-        is_binutils = tool_info['is_binutils']
         test_option = tool_info.get('test_option', '--help')
         platform = get_platform()
 
-        # Find tool in clang prebuilts in Android platform.
-        if toolname.startswith('llvm-') and platform == 'linux' and get_script_dir().endswith(
-                'system/extras/simpleperf/scripts'):
-            path = str(
-                Path(get_script_dir()).parents[3] / 'prebuilts' / 'clang' / 'host' / 'linux-x86' /
-                'llvm-binutils-stable' / toolname)
-            if is_executable_available(path, test_option):
+        if toolname.startswith('llvm-') and platform.startswith('linux'):
+            # Search for the tool in the Android platform clang prebuilts directory.
+            search_dirs = []
+            if get_script_dir().endswith('system/extras/simpleperf/scripts'):
+                search_dirs.append(Path(get_script_dir()).parents[3])
+
+            android_top = get_android_top()
+            if android_top and android_top not in search_dirs:
+                search_dirs.append(android_top)
+
+            for base_dir in search_dirs:
+                path = str(base_dir / 'prebuilts' / 'clang' / 'host' /
+                           cls.CLANG_DIR[platform] / 'llvm-binutils-stable' / toolname)
+                if is_executable_available(path, test_option):
+                    return path
+            # Search for the tool in the host binary directory. It works for python host binaries
+            # built with llvm binutils.
+            if path := get_host_binary_path(toolname, check=False):
                 return path
 
-        # Find tool in NDK or SDK.
+        # Search for the tool in Android NDK and SDK.
         path_in_ndk = None
         path_in_sdk = None
-        if is_binutils:
-            toolname_with_arch, path_in_ndk = cls._get_binutils_path_in_ndk(
-                toolname, arch, platform)
-        else:
-            toolname_with_arch = toolname
-            if 'path_in_ndk' in tool_info:
-                path_in_ndk = tool_info['path_in_ndk'](platform)
-            elif 'path_in_sdk' in tool_info:
-                path_in_sdk = tool_info['path_in_sdk']
+        if 'path_in_ndk' in tool_info:
+            path_in_ndk = tool_info['path_in_ndk'](platform)
+        elif 'path_in_sdk' in tool_info:
+            path_in_sdk = tool_info['path_in_sdk']
         if path_in_ndk:
             path_in_ndk = path_in_ndk.replace('/', os.sep)
         elif path_in_sdk:
@@ -263,14 +282,9 @@ class ToolFinder:
                 if is_executable_available(path, test_option):
                     return path
 
-        # Find tool in $PATH.
-        if is_executable_available(toolname_with_arch, test_option):
-            return toolname_with_arch
-
-        # Find tool without arch in $PATH.
-        if is_binutils and tool_info.get('accept_tool_without_arch'):
-            if is_executable_available(toolname, test_option):
-                return toolname
+        # Search for the tool in $PATH.
+        if is_executable_available(toolname, test_option):
+            return toolname
         return None
 
 
@@ -307,7 +321,10 @@ class AdbHelper(object):
         if log_output and stdout_data:
             logging.debug(stdout_data)
         if log_stderr and stderr_data:
-            logging.warning(stderr_data)
+            if result:
+                logging.debug(stderr_data)
+            else:
+                logging.warning(stderr_data)
         logging.debug('run adb cmd: %s  [result %s]' % (adb_args, result))
         return (result, stdout_data)
 
@@ -397,7 +414,7 @@ class AdbHelper(object):
             android_version = parse_version(s)
         if android_version == 0:
             s = self.get_property('ro.build.version.sdk')
-            if int(s) >= 35:
+            if s and int(s) >= 35:
                 android_version = 15
         return android_version
 
@@ -839,7 +856,7 @@ class Objdump(object):
     def _objdump_path(self, arch):
         objdump_path = self.objdump_paths.get(arch)
         if not objdump_path:
-            objdump_path = ToolFinder.find_tool_path('llvm-objdump', self.ndk_path, arch)
+            objdump_path = ToolFinder.find_tool_path('llvm-objdump', self.ndk_path)
             if not objdump_path:
                 log_exit("Can't find llvm-objdump." + NDK_ERROR_MESSAGE)
             self.objdump_paths[arch] = objdump_path
@@ -1160,17 +1177,42 @@ class LogFormatter(logging.Formatter):
 
 
 class Log:
-    initialized = False
+    initialized: bool = False
+    logger: logging.RootLogger | None = None
 
     @classmethod
-    def init(cls, log_level: str = 'info'):
+    def init(cls, log_level: str) -> None:
         assert not cls.initialized
+
         cls.initialized = True
         cls.logger = logging.root
-        cls.logger.setLevel(log_level.upper())
+
+        cls.logger.setLevel(Log.string_to_level(log_level))
+
         handler = logging.StreamHandler()
         handler.setFormatter(LogFormatter())
         cls.logger.addHandler(handler)
+
+    @staticmethod
+    def get_level_name(effective_level: int) -> str:
+        # getLevel() returns the integer (e.g., 20)
+        # Converts integer to string (e.g., "info")
+        return logging.getLevelName(effective_level).lower()
+
+    @staticmethod
+    def string_to_level(level_name: str) -> int:
+        """Converts a string like 'debug' to logging.DEBUG (10)."""
+        level_name_up: str = level_name.upper()
+
+        # Use getattr to find the constant
+        # Returns None if the string isn't a valid logging attribute
+        level = getattr(logging, level_name_up, None)
+
+        # Validation check
+        if not isinstance(level, int):
+            raise ValueError(f"Invalid log level: {level_name}")
+
+        return level
 
 
 class ArgParseFormatter(
