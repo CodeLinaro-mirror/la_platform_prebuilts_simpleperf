@@ -90,13 +90,13 @@ class TestExampleKotlinProfileableApk(TestExampleKotlin):
     """ Test profiling a profileable released apk."""
     @classmethod
     def setUpClass(cls):
-        if TestHelper.android_version >= 10:
+        if TestHelper.meets_min_android_version():
             cls.prepare("SimpleperfExampleKotlin",
                         "simpleperf.example.kotlin",
                         ".MainActivity", apk_name='app-release.apk')
 
     def setUp(self):
-        if TestHelper().android_version < 10:
+        if not TestHelper.meets_min_android_version():
             raise unittest.SkipTest("Profileable apk isn't supported on Android < Q.")
         super().setUp()
 

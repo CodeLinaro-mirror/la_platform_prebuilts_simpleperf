@@ -54,7 +54,7 @@ class TestPprofProtoGenerator(TestBase):
         self.assertIn(key, self.run_generator(['--pid', '10419', '10416']))
         self.assertNotIn(key, self.run_generator(['--pid', '10416']))
 
-    def test_thread_labels(self):
+    def test_labels(self):
         output = self.run_generator()
         self.assertIn('label[0] = thread:Binder:10419_1', output)
         self.assertIn('label[0] = thread:Binder:10419_2', output)
@@ -63,6 +63,7 @@ class TestPprofProtoGenerator(TestBase):
         self.assertIn('label[1] = threadpool:Binder:%d_%d', output)
         self.assertIn('label[2] = pid:10419', output)
         self.assertIn('label[3] = tid:10459', output)
+        self.assertIn('label[4] = cpu:2', output)
 
     def test_tid_filter(self):
         key1 = 'art::ProfileSaver::Run()'  # function in thread 10459
@@ -298,6 +299,9 @@ class TestPprofProtoGenerator(TestBase):
         # path.
         self.assertIn('testdata/perf_with_interpreter_frames.data', comments)
         self.assertIn('Architecture:\naarch64', comments)
+        self.assertIn('Android Version:\nP', comments)
+        self.assertIn('Product Props:\nGoogle:Pixel XL:marlin', comments)
+        self.assertIn('Simpleperf Version:\n1.e67919c7566d', comments)
 
     def test_sample_filters(self):
         def get_threads_for_filter(filter: str) -> Set[int]:
@@ -370,3 +374,7 @@ class TestPprofProtoGenerator(TestBase):
     def test_no_demangle(self):
         output = self.run_generator(['--no-demangle'])
         self.assertIn('name: _ZN7android14IPCThreadState14talkWithDriverEb', output)
+
+    def test_app_type(self):
+        output = self.run_generator(None, 'perf_with_trace_offcpu_v2.data')
+        self.assertRegex(output, r'App Type:\s*debuggable')

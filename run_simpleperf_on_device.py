@@ -25,7 +25,7 @@ from simpleperf_utils import AdbHelper, get_target_binary_path, Log
 
 
 def main():
-    Log.init()
+    Log.init('info')
     adb = AdbHelper()
     device_arch = adb.get_device_arch()
     simpleperf_binary = get_target_binary_path(device_arch, 'simpleperf')

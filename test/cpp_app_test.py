@@ -86,7 +86,7 @@ class TestExampleCppProfileableApk(TestExampleCpp):
                         ".MainActivity", apk_name='app-release.apk')
 
     def setUp(self):
-        if TestHelper().android_version < 10:
+        if TestHelper.android_version < 10:
             raise unittest.SkipTest("Profileable apk isn't supported on Android < Q.")
         super().setUp()
 

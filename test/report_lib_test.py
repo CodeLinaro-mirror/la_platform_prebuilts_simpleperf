@@ -21,9 +21,17 @@ import subprocess
 import tempfile
 from typing import Dict, List, Optional, Set
 
-from simpleperf_report_lib import ReportLib, ProtoFileReportLib
+from simpleperf_report_lib import (
+    CallChainStructure,
+    ProtoCallChain,
+    ProtoFileReportLib,
+    ProtoSample,
+    ReportLib,
+    SampleStruct,
+    SymbolStruct,
+)
 from simpleperf_utils import get_host_binary_path, ReadElf
-from . test_utils import TestBase, TestHelper
+from test.test_utils import TestBase, TestHelper, run_unit_tests
 
 
 class TestReportLib(TestBase):
@@ -381,6 +389,7 @@ class TestReportLib(TestBase):
         """ Test using ReportLib.DisableDemangle(). """
         record_file = TestHelper.testdata_path('perf_display_bitmaps.data')
         self.report_lib.SetRecordFile(record_file)
+
         def get_symbol_names() -> Set[str]:
             symbol_names = set()
             while self.report_lib.GetNextSample():
@@ -403,7 +412,7 @@ class TestReportLib(TestBase):
         record_file = TestHelper.testdata_path('perf_test_vmlinux.data')
         # Create a symfs_dir.
         symfs_dir = Path('symfs_dir')
-        symfs_dir.mkdir()
+        symfs_dir.mkdir(exist_ok=True)
         shutil.copy(TestHelper.testdata_path('vmlinux'), symfs_dir)
         kernel_build_id = ReadElf(TestHelper.ndk_path).get_build_id(symfs_dir / 'vmlinux')
         (symfs_dir / 'build_id_list').write_text('%s=vmlinux' % kernel_build_id)
@@ -535,3 +544,63 @@ class TestProtoFileReportLib(TestBase):
             TestHelper.testdata_path('perf.data'))
         report_lib.SetRecordFile(proto_file_path)
         self.assertEqual(report_lib.GetSupportedTraceOffCpuModes(), [])
+
+    def test_add_proguard_mapping_file(self):
+        report_lib = ProtoFileReportLib()
+        with self.assertRaises(ValueError):
+            report_lib.AddProguardMappingFile('non_exist_file')
+        proguard_mapping_file = TestHelper.testdata_path('proguard_mapping.txt')
+        report_lib.AddProguardMappingFile(proguard_mapping_file)
+        report_lib.Close()
+
+    def test_de_obfuscate(self):
+        report_lib = ProtoFileReportLib()
+        proto_file_path = self.convert_perf_data_to_proto_file(
+            TestHelper.testdata_path('perf_need_proguard_mapping.data'))
+        report_lib.SetRecordFile(proto_file_path)
+        report_lib.AddProguardMappingFile(TestHelper.testdata_path('proguard_mapping.txt'))
+        symbol_names = set()
+        while report_lib.GetNextSample():
+            symbol = report_lib.GetSymbolOfCurrentSample()
+            symbol_names.add(symbol.symbol_name)
+        self.assertIn('androidx.fragment.app.FragmentActivity.startActivityForResult', symbol_names)
+        report_lib.Close()
+
+    def test_trace_data_consistency(self) -> None:
+        test_file: str = TestHelper.testdata_path('perf_display_bitmaps.data')
+
+        proto_report_lib = ProtoFileReportLib()
+        report_lib = ReportLib()
+
+        self.assertIsNotNone(proto_report_lib)
+        self.assertIsNotNone(report_lib)
+
+        proto_report_lib.SetRecordFile(self.convert_perf_data_to_proto_file(test_file))
+        report_lib.SetRecordFile(test_file)
+
+        proto_sample: ProtoSample | None = None
+        while proto_sample := proto_report_lib.GetNextSample():
+            sample: SampleStruct | None = report_lib.GetNextSample()
+            self.assertIsNotNone(sample)
+
+            sample_symbol: SymbolStruct = report_lib.GetSymbolOfCurrentSample()
+            self.assertEqual(proto_sample.ip, sample_symbol.vaddr_in_file)
+
+            proto_callchain: ProtoCallChain = proto_report_lib.GetCallChainOfCurrentSample()
+            callchain: CallChainStructure = report_lib.GetCallChainOfCurrentSample()
+            self.assertEqual(proto_callchain.nr, callchain.nr)
+
+            for i in range(proto_callchain.nr):
+                self.assertEqual(proto_callchain.entries[i].ip,
+                                 callchain.entries[i].symbol.vaddr_in_file)
+                self.assertEqual(proto_callchain.entries[i].symbol.vaddr_in_file,
+                                 callchain.entries[i].symbol.vaddr_in_file)
+                self.assertEqual(proto_callchain.entries[i].symbol.symbol_name,
+                                 callchain.entries[i].symbol.symbol_name)
+
+        report_lib.Close()
+        proto_report_lib.Close()
+
+
+if __name__ == "__main__":
+    run_unit_tests("report_lib_test")
